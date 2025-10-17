@@ -15,7 +15,7 @@ number2type = {v: k for k, v in type2number.items()}
 
 def string2hex(string):
     ''.join(format(ord(char), '02x') for char in string)
-class message:
+class Message:
     type = "header"
     payload = ""
     trueMSG = [] #an array with the true byes (hexadecimal
