@@ -1,22 +1,57 @@
 import sys
 import socket
 import message
+import time
+import signal
 from peer import Peer
 
 
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully"""
+    print("\n\nShutting down peer...")
+    if 'peer' in globals():
+        peer.shutdown()
+    sys.exit(0)
+
 
 def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+    print(f'Hi, {name}')
 
 
-# Make sure you add an argument (peer id) when running!
 if __name__ == '__main__':
+    signal.signal(signal.SIGINT, signal_handler)
+    
     print_hi('PyCharm')
+    
+    if len(sys.argv) < 2:
+        print("Usage: python main.py <peer_id>")
+        print("Example: python main.py 1001")
+        sys.exit(1)
+    
     peer = Peer(int(sys.argv[1]))
 
-    # test
-    print("Hello User from " + peer.host_name + " connecting through port " + str(peer.port))
-    print("Are you ready to download " + peer.file_name + "?")
+    print("\n" + "="*50)
+    print(f"Peer {peer.id} Started Successfully!")
+    print("="*50)
+    print(f"Host: {peer.host_name}")
+    print(f"Port: {peer.port}")
+    print(f"Has complete file: {peer.file_complete}")
+    print(f"File: {peer.file_name} ({peer.file_size} bytes)")
+    print(f"Piece size: {peer.piece_size} bytes")
+    print("="*50)
+    
+    print("\nWaiting for connections to establish...")
+    time.sleep(2)
+    
+    connected_peers = peer.get_connected_peers()
+    print(f"\n[Peer {peer.id}] Connected to {len(connected_peers)} peer(s): {connected_peers}")
+    
+    print(f"\n[Peer {peer.id}] Running... Press Ctrl+C to exit")
+    try:
+        while True:
+            time.sleep(5)
+            connected = peer.get_connected_peers()
+            print(f"[Peer {peer.id}] Active connections: {connected}")
+    except KeyboardInterrupt:
+        peer.shutdown()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
