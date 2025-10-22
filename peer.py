@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime
 from message import Message
+import random
 
 class Peer:
     def __init__(self, id):
