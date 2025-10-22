@@ -2,6 +2,7 @@ import os
 import socket
 import threading
 import time
+from datetime import datetime
 from message import Message
 import random
 
@@ -44,6 +45,7 @@ class Peer:
 
         if not os.path.exists("peer_" + str(self.id)):
             os.mkdir("peer_" + str(self.id))
+
 
         self.log_file = open("log_peer_" + str(self.id) + ".log", "a")
 
@@ -124,35 +126,35 @@ class Peer:
         """Handle an incoming peer connection (runs in thread)"""
         try:
             print(f"[Peer {self.id}] Handling connection from {client_address}")
-
+            
             # Step 1: Receive handshake
             handshake_data = client_socket.recv(32)
             if len(handshake_data) != 32:
                 print(f"[Peer {self.id}] Invalid handshake length from {client_address}")
                 return
-
+            
             peer_id = Message.parse_handshake(handshake_data)
             if peer_id is None:
                 print(f"[Peer {self.id}] Invalid handshake from {client_address}")
                 return
-
+            
             print(f"[Peer {self.id}] Received handshake from Peer {peer_id}")
-            self.log_file.write(time() + ": Peer " + str(self.id) + " is connected from Peer " + str(peer_id))
-
+            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) + " is connected from Peer " + str(peer_id))
+            
             # Step 2: Send handshake response
             response = Message.create_handshake(self.id)
             client_socket.sendall(response)
             print(f"[Peer {self.id}] Sent handshake to Peer {peer_id}")
-
+            
             # Store connection
             with self.connection_lock:
                 self.connections[peer_id] = client_socket
-
+            
             # TODO: Exchange bitfield messages next
-
+            
             while self.running:
                 time.sleep(1)
-
+                
         except Exception as e:
             print(f"[Peer {self.id}] Error handling incoming connection: {e}")
         finally:
@@ -161,72 +163,72 @@ class Peer:
                     if peer_id in self.connections:
                         del self.connections[peer_id]
             client_socket.close()
-
+    
     def _connect_to_previous_peers(self):
         """Connect to all peers that started before this one"""
         print(f"[Peer {self.id}] Connecting to previous peers...")
-
+        
         for peer_info in self.all_peers:
             if peer_info['id'] < self.id:
                 self._connect_to_peer(peer_info)
-
+    
     def _connect_to_peer(self, peer_info):
         """Initiate connection to a specific peer"""
         peer_id = peer_info['id']
         peer_host = peer_info['host']
         peer_port = peer_info['port']
-
+        
         try:
             print(f"[Peer {self.id}] Connecting to Peer {peer_id} at {peer_host}:{peer_port}")
-
+            
             peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             peer_socket.settimeout(10.0)
             peer_socket.connect((peer_host, peer_port))
-
+            
             print(f"[Peer {self.id}] Successfully connected to Peer {peer_id}")
-
+            
             with self.connection_lock:
                 self.connections[peer_id] = peer_socket
-
+            
             handler_thread = threading.Thread(
                 target=self._handle_peer_connection,
                 args=(peer_socket, peer_id),
                 daemon=True
             )
             handler_thread.start()
-
+            
         except Exception as e:
             print(f"[Peer {self.id}] Failed to connect to Peer {peer_id}: {e}")
-
+    
     def _handle_peer_connection(self, peer_socket, peer_id):
         """Handle communication with a connected peer (runs in thread)"""
         try:
             print(f"[Peer {self.id}] Managing connection with Peer {peer_id}")
-
+            
             # Step 1: Send handshake
             handshake = Message.create_handshake(self.id)
             peer_socket.sendall(handshake)
             print(f"[Peer {self.id}] Sent handshake to Peer {peer_id}")
-
+            
             # Step 2: Receive handshake response
             response_data = peer_socket.recv(32)
             if len(response_data) != 32:
                 print(f"[Peer {self.id}] Invalid handshake response from Peer {peer_id}")
                 return
-
+            
             received_peer_id = Message.parse_handshake(response_data)
             if received_peer_id != peer_id:
                 print(f"[Peer {self.id}] Peer ID mismatch! Expected {peer_id}, got {received_peer_id}")
                 return
-
+            
             print(f"[Peer {self.id}] Received handshake response from Peer {peer_id}")
-            self.log_file.write(time() + ": Peer " + str(self.id) + " makes a connection to Peer " + str(peer_id))
-
+            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) + " makes a connection to Peer " + str(peer_id))
+            
             # TODO: Exchange bitfield messages next
-
+            
             while self.running:
                 time.sleep(1)
-
+                
         except Exception as e:
             print(f"[Peer {self.id}] Error in connection with Peer {peer_id}: {e}")
         finally:
@@ -235,7 +237,7 @@ class Peer:
                     del self.connections[peer_id]
             peer_socket.close()
             print(f"[Peer {self.id}] Closed connection with Peer {peer_id}")
-
+    
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
         with self.connection_lock:
@@ -278,7 +280,7 @@ class Peer:
         """Gracefully shutdown all connections"""
         print(f"[Peer {self.id}] Shutting down...")
         self.running = False
-
+        
         with self.connection_lock:
             for peer_id, peer_socket in self.connections.items():
                 try:
@@ -287,12 +289,12 @@ class Peer:
                 except:
                     pass
             self.connections.clear()
-
+        
         if self.server_socket:
             try:
                 self.server_socket.close()
                 print(f"[Peer {self.id}] Server socket closed")
             except:
                 pass
-
+        
         print(f"[Peer {self.id}] Shutdown complete")
