@@ -42,6 +42,10 @@ class Peer:
 
         if not os.path.exists("peer_" + str(self.id)):
             os.mkdir("peer_" + str(self.id))
+
+
+        self.log_file = open("log_peer_" + str(self.id) + ".log", "a")
+
         
         self._read_all_peers()
         self._start_server()
@@ -94,6 +98,7 @@ class Peer:
                 try:
                     client_socket, client_address = self.server_socket.accept()
                     print(f"[Peer {self.id}] Accepted connection from {client_address}")
+
                     
                     handler_thread = threading.Thread(
                         target=self._handle_incoming_connection,
@@ -126,6 +131,7 @@ class Peer:
                 return
             
             print(f"[Peer {self.id}] Received handshake from Peer {peer_id}")
+            self.log_file.write(time() + ": Peer " + str(self.id) + " is connected from Peer " + str(peer_id))
             
             # Step 2: Send handshake response
             response = Message.create_handshake(self.id)
@@ -208,6 +214,7 @@ class Peer:
                 return
             
             print(f"[Peer {self.id}] Received handshake response from Peer {peer_id}")
+            self.log_file.write(time() + ": Peer " + str(self.id) + " makes a connection to Peer " + str(peer_id))
             
             # TODO: Exchange bitfield messages next
             
