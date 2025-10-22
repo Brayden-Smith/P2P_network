@@ -2,6 +2,7 @@ import os
 import socket
 import threading
 import time
+from message import Message
 
 class Peer:
     def __init__(self, id):
@@ -113,7 +114,29 @@ class Peer:
         try:
             print(f"[Peer {self.id}] Handling connection from {client_address}")
             
-            # TODO: Implement handshake, bitfield exchange, and message handling
+            # Step 1: Receive handshake
+            handshake_data = client_socket.recv(32)
+            if len(handshake_data) != 32:
+                print(f"[Peer {self.id}] Invalid handshake length from {client_address}")
+                return
+            
+            peer_id = Message.parse_handshake(handshake_data)
+            if peer_id is None:
+                print(f"[Peer {self.id}] Invalid handshake from {client_address}")
+                return
+            
+            print(f"[Peer {self.id}] Received handshake from Peer {peer_id}")
+            
+            # Step 2: Send handshake response
+            response = Message.create_handshake(self.id)
+            client_socket.sendall(response)
+            print(f"[Peer {self.id}] Sent handshake to Peer {peer_id}")
+            
+            # Store connection
+            with self.connection_lock:
+                self.connections[peer_id] = client_socket
+            
+            # TODO: Exchange bitfield messages next
             
             while self.running:
                 time.sleep(1)
@@ -121,6 +144,10 @@ class Peer:
         except Exception as e:
             print(f"[Peer {self.id}] Error handling incoming connection: {e}")
         finally:
+            if 'peer_id' in locals() and peer_id:
+                with self.connection_lock:
+                    if peer_id in self.connections:
+                        del self.connections[peer_id]
             client_socket.close()
     
     def _connect_to_previous_peers(self):
@@ -164,7 +191,25 @@ class Peer:
         try:
             print(f"[Peer {self.id}] Managing connection with Peer {peer_id}")
             
-            # TODO: Implement handshake, bitfield exchange, and piece transfer
+            # Step 1: Send handshake
+            handshake = Message.create_handshake(self.id)
+            peer_socket.sendall(handshake)
+            print(f"[Peer {self.id}] Sent handshake to Peer {peer_id}")
+            
+            # Step 2: Receive handshake response
+            response_data = peer_socket.recv(32)
+            if len(response_data) != 32:
+                print(f"[Peer {self.id}] Invalid handshake response from Peer {peer_id}")
+                return
+            
+            received_peer_id = Message.parse_handshake(response_data)
+            if received_peer_id != peer_id:
+                print(f"[Peer {self.id}] Peer ID mismatch! Expected {peer_id}, got {received_peer_id}")
+                return
+            
+            print(f"[Peer {self.id}] Received handshake response from Peer {peer_id}")
+            
+            # TODO: Exchange bitfield messages next
             
             while self.running:
                 time.sleep(1)
