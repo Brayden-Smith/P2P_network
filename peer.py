@@ -237,7 +237,7 @@ class Peer:
         with self.connection_lock:
             return list(self.connections.keys())
 
-        def calculate_download(self):
+    def calculate_download(self):
         """Calculate the download speed of every peer that has sent data in this interval """
         self.download_speeds = {}
         for peer_id in self.received_bytes:
