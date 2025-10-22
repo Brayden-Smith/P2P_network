@@ -4,14 +4,12 @@ import threading
 import time
 from datetime import datetime
 from message import Message
-import random
-
 
 class Peer:
     def __init__(self, id):
         self.id = id
         self.peers = []
-
+        
         self.connections = {}
         self.connection_lock = threading.Lock()
         self.server_socket = None
@@ -49,18 +47,12 @@ class Peer:
 
         self.log_file = open("log_peer_" + str(self.id) + ".log", "a")
 
-        self.received_bytes = {}
-        self.download_speeds = {}
-
-        self.interested_neighbors = []
-        self.preferred_neighbors = []
-        self.optimistic_neighbor = 0
-
+        
         self._read_all_peers()
         self._start_server()
         time.sleep(0.5)
         self._connect_to_previous_peers()
-
+    
     def _read_all_peers(self):
         """Read all peer information from PeerInfo.cfg"""
         try:
@@ -79,7 +71,7 @@ class Peer:
             print(f"[Peer {self.id}] Loaded {len(self.all_peers)} peers from config")
         except Exception as e:
             print(f"[Peer {self.id}] Error reading peer info: {e}")
-
+    
     def _start_server(self):
         """Start listening socket in background thread"""
         try:
@@ -87,41 +79,42 @@ class Peer:
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host_name, self.port))
             self.server_socket.listen(10)
-
+            
             print(f"[Peer {self.id}] Server listening on {self.host_name}:{self.port}")
-
+            
             self.server_thread = threading.Thread(target=self._accept_connections, daemon=True)
             self.server_thread.start()
-
+            
         except Exception as e:
             print(f"[Peer {self.id}] Error starting server: {e}")
-
+    
     def _accept_connections(self):
         """Accept incoming connections (runs in thread)"""
         print(f"[Peer {self.id}] Waiting for incoming connections...")
-
+        
         while self.running:
             try:
                 self.server_socket.settimeout(1.0)
-
+                
                 try:
                     client_socket, client_address = self.server_socket.accept()
                     print(f"[Peer {self.id}] Accepted connection from {client_address}")
 
+                    
                     handler_thread = threading.Thread(
                         target=self._handle_incoming_connection,
                         args=(client_socket, client_address),
                         daemon=True
                     )
                     handler_thread.start()
-
+                    
                 except socket.timeout:
                     continue
-
+                    
             except Exception as e:
                 if self.running:
                     print(f"[Peer {self.id}] Error accepting connection: {e}")
-
+    
     def _handle_incoming_connection(self, client_socket, client_address):
         """Handle an incoming peer connection (runs in thread)"""
         try:
@@ -243,7 +236,7 @@ class Peer:
         with self.connection_lock:
             return list(self.connections.keys())
 
-    def calculate_download(self):
+        def calculate_download(self):
         """Calculate the download speed of every peer that has sent data in this interval """
         self.download_speeds = {}
         for peer_id in self.received_bytes:
@@ -276,6 +269,7 @@ class Peer:
         else:
             return random.choice(candidates)
 
+    
     def shutdown(self):
         """Gracefully shutdown all connections"""
         print(f"[Peer {self.id}] Shutting down...")
