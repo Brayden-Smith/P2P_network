@@ -235,6 +235,40 @@ class Peer:
         """Return list of currently connected peer IDs"""
         with self.connection_lock:
             return list(self.connections.keys())
+
+        def calculate_download(self):
+        """Calculate the download speed of every peer that has sent data in this interval """
+        self.download_speeds = {}
+        for peer_id in self.received_bytes:
+            self.download_speeds[peer_id] = self.received_bytes[peer_id] / self.unchoking_interval
+
+        # reset received_bytes for next interval
+        self.received_bytes = {}
+
+    def choose_preferred_neighbor(self):
+        self.preferred_neighbors = []
+
+        self.calculate_download()
+
+        neighbors = list(self.download_speeds.items())
+        random.shuffle(neighbors)  # Shuffle to handle ties randomly
+        neighbors.sort(key=lambda x: x[1], reverse=True)  # Sort by download speed descending
+
+        top_neighbors = neighbors[:self.neighbor_count]
+        self.preferred_peers = [peer_id for peer_id, _ in top_neighbors]
+
+    def choose_optimistic_neighbor(self):
+        candidates = []
+        for peer in self.interested_neighbors:
+            # if it is not a preferred neighbor it is choked
+            if peer not in self.preferred_neighbors:
+                candidates.append(peer)
+
+        if len(candidates) == 0:
+            return None
+        else:
+            return random.choice(candidates)
+
     
     def shutdown(self):
         """Gracefully shutdown all connections"""
