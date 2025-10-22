@@ -2,6 +2,7 @@ import os
 import socket
 import threading
 import time
+from datetime import datetime
 from message import Message
 
 class Peer:
@@ -131,7 +132,7 @@ class Peer:
                 return
             
             print(f"[Peer {self.id}] Received handshake from Peer {peer_id}")
-            self.log_file.write(time() + ": Peer " + str(self.id) + " is connected from Peer " + str(peer_id))
+            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) + " is connected from Peer " + str(peer_id))
             
             # Step 2: Send handshake response
             response = Message.create_handshake(self.id)
@@ -214,7 +215,7 @@ class Peer:
                 return
             
             print(f"[Peer {self.id}] Received handshake response from Peer {peer_id}")
-            self.log_file.write(time() + ": Peer " + str(self.id) + " makes a connection to Peer " + str(peer_id))
+            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) + " makes a connection to Peer " + str(peer_id))
             
             # TODO: Exchange bitfield messages next
             
