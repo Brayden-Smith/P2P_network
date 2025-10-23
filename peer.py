@@ -270,6 +270,7 @@ class Peer:
         else:
             return random.choice(candidates)
 
+
     
     def shutdown(self):
         """Gracefully shutdown all connections"""

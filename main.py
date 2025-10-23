@@ -49,7 +49,17 @@ if __name__ == '__main__':
     print(f"\n[Peer {peer.id}] Running... Press Ctrl+C to exit")
     try:
         while True:
-            time.sleep(5)
+            last_unchoke_time = time.time()
+            last_optimistic_time = time.time()
+
+            current_time = time.time()
+            if current_time - last_unchoke_time >= peer.unchoking_interval:
+                last_unchoke_time = current_time
+
+            if current_time - last_optimistic_time >= peer.unchoking_optimistic_interval:
+                last_optimistic_time = current_time
+
+
             connected = peer.get_connected_peers()
             print(f"[Peer {peer.id}] Active connections: {connected}")
     except KeyboardInterrupt:
