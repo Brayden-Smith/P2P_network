@@ -48,6 +48,11 @@ class Peer:
         # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
+        self.received_bytes = {}
+        self.download_speeds = {}
+        self.interested_neighbors = []
+        self.optimistic_neighbor = 0
+        self.preferred_neighbors = []
         
         self._read_all_peers()
         self._start_server()
@@ -266,9 +271,9 @@ class Peer:
                 candidates.append(peer)
 
         if len(candidates) == 0:
-            return None
+            self.optimistic_neighbor = 0
         else:
-            return random.choice(candidates)
+            self.optimistic_neighbor = random.choice(candidates)
 
 
     

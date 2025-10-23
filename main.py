@@ -56,12 +56,11 @@ if __name__ == '__main__':
             if current_time - last_unchoke_time >= peer.unchoking_interval:
                 last_unchoke_time = current_time
 
-            if current_time - last_optimistic_time >= peer.unchoking_optimistic_interval:
+            if current_time - last_optimistic_time >= peer.optimistic_unchoking_interval:
+                peer.choose_optimistic_neighbor()
                 last_optimistic_time = current_time
-
 
             connected = peer.get_connected_peers()
             print(f"[Peer {peer.id}] Active connections: {connected}")
     except KeyboardInterrupt:
         peer.shutdown()
-
