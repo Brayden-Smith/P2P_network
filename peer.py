@@ -56,10 +56,13 @@ class Peer:
         self.preferred_neighbors = []
 
         self.bitfield = []
+        self.hasPieces = True #to make it so we don't check massive arrays for a 1
         if(self.file_complete):
             self.bitfield = [1] * math.ceil(self.file_size / self.piece_size)
+            self.hasPieces = True
         else:
             self.bitfield = [0] * math.ceil(self.file_size / self.piece_size)
+            self.hasPieces = False
 
         self._read_all_peers()
         self._start_server()
@@ -157,6 +160,16 @@ class Peer:
                 self.connections[peer_id] = client_socket
 
             # TODO: Exchange bitfield messages next
+            bitfield_length = client_socket.recv(4)
+            bitfield_type = client_socket.recv(1)
+            msg_payload = client_socket.recv(bitfield_length-1)
+            if bitfield_type != 5: #machine sending connection always sends bitfield
+                raise ValueError(f"{peer_id} sent non-bitfield as first message")
+            else:
+                if(self.hasPieces):
+                    bitmsg = Message.create_message("bitfield", self.bitfield)
+                    client_socket.sendall(bitmsg)
+
 
             while self.running:
                 time.sleep(1)
@@ -231,7 +244,14 @@ class Peer:
             self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) +
                                 " makes a connection to Peer " + str(peer_id))
 
-            # TODO: Exchange bitfield messages next
+            bitmsg = Message.create_message("bitfield", self.bitfield)
+            peer_socket.sendall(bitmsg)
+
+            bitfield_length = peer_socket.recv(4)
+            bitfield_type = peer_socket.recv(1)
+            msg_payload = peer_socket.recv(bitfield_length-1)
+
+            #TODO: take bitfield and figure out if interested
 
             while self.running:
                 time.sleep(1)
