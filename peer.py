@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from message import Message
 import random
-
+import math
 
 class Peer:
     def __init__(self, id):
@@ -54,6 +54,12 @@ class Peer:
         self.interested_neighbors = []
         self.optimistic_neighbor = 0
         self.preferred_neighbors = []
+
+        self.bitfield = []
+        if(self.file_complete):
+            self.bitfield = [1] * math.ceil(self.file_size / self.piece_size)
+        else:
+            self.bitfield = [0] * math.ceil(self.file_size / self.piece_size)
 
         self._read_all_peers()
         self._start_server()
