@@ -56,6 +56,7 @@ class Peer:
         self.optimistic_neighbor = 0
         self.preferred_neighbors = []
         self.peer_bitfields = {}
+        self.peer_interest_status = {}
 
         self.bitfield = []
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
@@ -149,8 +150,7 @@ class Peer:
                 return
 
             print(f"[Peer {self.id}] Received handshake from Peer {peer_id}")
-            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) +
-                                " is connected from Peer " + str(peer_id))
+            self._log_event(f"Peer {self.id} is connected from Peer {peer_id}.")
 
             # Step 2: Send handshake response
             response = Message.create_handshake(self.id)
@@ -174,8 +174,7 @@ class Peer:
 
             self._handle_bitfield(peer_id, payload, client_socket)
 
-            while self.running:
-                time.sleep(1)
+            self._listen_for_messages(client_socket, peer_id)
 
         except Exception as e:
             print(f"[Peer {self.id}] Error handling incoming connection: {e}")
@@ -186,6 +185,8 @@ class Peer:
                         del self.connections[peer_id]
                 if peer_id in self.peer_bitfields:
                     del self.peer_bitfields[peer_id]
+                if peer_id in self.peer_interest_status:
+                    del self.peer_interest_status[peer_id]
             client_socket.close()
 
     def _connect_to_previous_peers(self):
@@ -246,8 +247,7 @@ class Peer:
                 return
 
             print(f"[Peer {self.id}] Received handshake response from Peer {peer_id}")
-            self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) +
-                                " makes a connection to Peer " + str(peer_id))
+            self._log_event(f"Peer {self.id} makes a connection to Peer {peer_id}.")
 
             self._send_bitfield(peer_socket)
 
@@ -261,8 +261,7 @@ class Peer:
 
             self._handle_bitfield(peer_id, payload, peer_socket)
 
-            while self.running:
-                time.sleep(1)
+            self._listen_for_messages(peer_socket, peer_id)
 
         except Exception as e:
             print(f"[Peer {self.id}] Error in connection with Peer {peer_id}: {e}")
@@ -272,8 +271,16 @@ class Peer:
                     del self.connections[peer_id]
             if peer_id in self.peer_bitfields:
                 del self.peer_bitfields[peer_id]
+            if peer_id in self.peer_interest_status:
+                del self.peer_interest_status[peer_id]
             peer_socket.close()
             print(f"[Peer {self.id}] Closed connection with Peer {peer_id}")
+
+    def _log_event(self, message):
+        """Write a timestamped event to this peer's log file"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.log_file.write(f"{timestamp}: {message}\n")
+        self.log_file.flush()
 
     def _send_bitfield(self, peer_socket):
         """Send this peer's bitfield to a neighbor"""
@@ -287,12 +294,7 @@ class Peer:
         remote_bitfield = self._decode_bitfield(payload, piece_count)
         self.peer_bitfields[peer_id] = remote_bitfield
 
-        if self._should_send_interested(remote_bitfield):
-            interested_msg = Message.create_message("interested")
-            peer_socket.sendall(interested_msg)
-        else:
-            not_interested_msg = Message.create_message("not interested")
-            peer_socket.sendall(not_interested_msg)
+        self._evaluate_interest(peer_id, peer_socket)
 
     def _should_send_interested(self, remote_bitfield):
         """Determine if the remote peer has pieces we need"""
@@ -329,6 +331,19 @@ class Peer:
                 bits.append((payload[byte_index] >> (7 - bit_index)) & 1)
         return bits
 
+    def _evaluate_interest(self, peer_id, peer_socket):
+        """Send interested/not interested message if our need state changed"""
+        remote = self.peer_bitfields.get(peer_id, [])
+        interested = self._should_send_interested(remote)
+        previous = self.peer_interest_status.get(peer_id)
+
+        if interested and previous is not True:
+            peer_socket.sendall(Message.create_message("interested"))
+            self.peer_interest_status[peer_id] = True
+        elif not interested and previous is not False:
+            peer_socket.sendall(Message.create_message("not interested"))
+            self.peer_interest_status[peer_id] = False
+
     def _recv_exact(self, peer_socket, num_bytes):
         """Receive an exact number of bytes or return None on disconnect"""
 
@@ -353,6 +368,65 @@ class Peer:
 
         parsed = Message.parse_message(length_bytes + body)
         return parsed
+
+    def _listen_for_messages(self, peer_socket, peer_id):
+        """Continuously read messages from a connected peer"""
+        while self.running:
+            incoming = self._recv_message(peer_socket)
+            if not incoming:
+                break
+
+            msg_type, payload = incoming
+            try:
+                self._handle_message(peer_id, msg_type, payload, peer_socket)
+            except Exception as exc:
+                print(f"[Peer {self.id}] Error handling {msg_type} from Peer {peer_id}: {exc}")
+                break
+
+    def _handle_message(self, peer_id, msg_type, payload, peer_socket):
+        """Dispatch a message to the appropriate handler"""
+        if msg_type == "interested":
+            self._handle_interested(peer_id)
+        elif msg_type == "not interested":
+            self._handle_not_interested(peer_id)
+        elif msg_type == "have":
+            self._handle_have(peer_id, payload, peer_socket)
+        else:
+            # Future handlers will cover other message types
+            pass
+
+    def _handle_interested(self, peer_id):
+        """Record that a neighbor is interested in our pieces"""
+        if peer_id not in self.interested_neighbors:
+            self.interested_neighbors.append(peer_id)
+        self._log_event(f"Peer {self.id} received the 'interested' message from {peer_id}.")
+
+    def _handle_not_interested(self, peer_id):
+        """Record that a neighbor is no longer interested"""
+        if peer_id in self.interested_neighbors:
+            self.interested_neighbors.remove(peer_id)
+        self._log_event(f"Peer {self.id} received the 'not interested' message from {peer_id}.")
+
+    def _handle_have(self, peer_id, payload, peer_socket):
+        """Update neighbor bitfield information upon receiving a have message"""
+        if len(payload) != 4:
+            raise ValueError("Invalid 'have' payload length")
+
+        piece_index = struct.unpack('>I', payload)[0]
+        self._log_event(f"Peer {self.id} received the 'have' message from {peer_id} for the piece {piece_index}.")
+
+        remote_bitfield = self.peer_bitfields.get(peer_id)
+        if remote_bitfield and 0 <= piece_index < len(remote_bitfield):
+            remote_bitfield[piece_index] = 1
+        else:
+            # If we didn't get an initial bitfield, create a sparse representation
+            piece_count = len(self.bitfield)
+            remote_bitfield = [0] * piece_count
+            if 0 <= piece_index < piece_count:
+                remote_bitfield[piece_index] = 1
+            self.peer_bitfields[peer_id] = remote_bitfield
+
+        self._evaluate_interest(peer_id, peer_socket)
 
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
