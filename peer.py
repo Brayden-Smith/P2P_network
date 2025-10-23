@@ -45,8 +45,8 @@ class Peer:
         if not os.path.exists("peer_" + str(self.id)):
             os.mkdir("peer_" + str(self.id))
 
-
-        self.log_file = open("log_peer_" + str(self.id) + ".log", "a")
+        # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
+        self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
         
         self._read_all_peers()
@@ -293,3 +293,6 @@ class Peer:
                 pass
         
         print(f"[Peer {self.id}] Shutdown complete")
+
+        # Close log file to save it
+        self.log_file.close()
