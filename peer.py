@@ -6,6 +6,7 @@ from datetime import datetime
 from message import Message
 import random
 import math
+import struct
 
 class Peer:
     def __init__(self, id):
@@ -54,6 +55,7 @@ class Peer:
         self.interested_neighbors = []
         self.optimistic_neighbor = 0
         self.preferred_neighbors = []
+        self.peer_bitfields = {}
 
         self.bitfield = []
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
@@ -159,17 +161,18 @@ class Peer:
             with self.connection_lock:
                 self.connections[peer_id] = client_socket
 
-            # TODO: Exchange bitfield messages next
-            bitfield_length = client_socket.recv(4)
-            bitfield_type = client_socket.recv(1)
-            msg_payload = client_socket.recv(bitfield_length-1)
-            if bitfield_type != 5: #machine sending connection always sends bitfield
-                raise ValueError(f"{peer_id} sent non-bitfield as first message")
-            else:
-                if(self.hasPieces):
-                    bitmsg = Message.create_message("bitfield", self.bitfield)
-                    client_socket.sendall(bitmsg)
+            # Exchange bitfield messages
+            self._send_bitfield(client_socket)
 
+            incoming = self._recv_message(client_socket)
+            if not incoming:
+                raise ValueError(f"{peer_id} closed connection before sending bitfield")
+
+            msg_type, payload = incoming
+            if msg_type != "bitfield":
+                raise ValueError(f"{peer_id} sent non-bitfield as first message")
+
+            self._handle_bitfield(peer_id, payload, client_socket)
 
             while self.running:
                 time.sleep(1)
@@ -181,6 +184,8 @@ class Peer:
                 with self.connection_lock:
                     if peer_id in self.connections:
                         del self.connections[peer_id]
+                if peer_id in self.peer_bitfields:
+                    del self.peer_bitfields[peer_id]
             client_socket.close()
 
     def _connect_to_previous_peers(self):
@@ -244,14 +249,17 @@ class Peer:
             self.log_file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ": Peer " + str(self.id) +
                                 " makes a connection to Peer " + str(peer_id))
 
-            bitmsg = Message.create_message("bitfield", self.bitfield)
-            peer_socket.sendall(bitmsg)
+            self._send_bitfield(peer_socket)
 
-            bitfield_length = peer_socket.recv(4)
-            bitfield_type = peer_socket.recv(1)
-            msg_payload = peer_socket.recv(bitfield_length-1)
+            incoming = self._recv_message(peer_socket)
+            if not incoming:
+                raise ValueError(f"{peer_id} closed connection before sending bitfield")
 
-            #TODO: take bitfield and figure out if interested
+            msg_type, payload = incoming
+            if msg_type != "bitfield":
+                raise ValueError(f"{peer_id} sent non-bitfield as first message")
+
+            self._handle_bitfield(peer_id, payload, peer_socket)
 
             while self.running:
                 time.sleep(1)
@@ -262,8 +270,89 @@ class Peer:
             with self.connection_lock:
                 if peer_id in self.connections:
                     del self.connections[peer_id]
+            if peer_id in self.peer_bitfields:
+                del self.peer_bitfields[peer_id]
             peer_socket.close()
             print(f"[Peer {self.id}] Closed connection with Peer {peer_id}")
+
+    def _send_bitfield(self, peer_socket):
+        """Send this peer's bitfield to a neighbor"""
+        encoded = self._encode_bitfield()
+        message = Message.create_message("bitfield", encoded)
+        peer_socket.sendall(message)
+
+    def _handle_bitfield(self, peer_id, payload, peer_socket):
+        """Process a received bitfield and express interest if needed"""
+        piece_count = len(self.bitfield)
+        remote_bitfield = self._decode_bitfield(payload, piece_count)
+        self.peer_bitfields[peer_id] = remote_bitfield
+
+        if self._should_send_interested(remote_bitfield):
+            interested_msg = Message.create_message("interested")
+            peer_socket.sendall(interested_msg)
+        else:
+            not_interested_msg = Message.create_message("not interested")
+            peer_socket.sendall(not_interested_msg)
+
+    def _should_send_interested(self, remote_bitfield):
+        """Determine if the remote peer has pieces we need"""
+        for index, has_piece in enumerate(remote_bitfield):
+            if has_piece and not self.bitfield[index]:
+                return True
+        return False
+
+    def _encode_bitfield(self):
+        """Convert the local bitfield list into the protocol byte format"""
+        if not self.bitfield:
+            return b""
+
+        byte_count = math.ceil(len(self.bitfield) / 8)
+        encoded = bytearray(byte_count)
+
+        for index, bit in enumerate(self.bitfield):
+            if bit:
+                byte_index = index // 8
+                bit_index = index % 8
+                encoded[byte_index] |= 1 << (7 - bit_index)
+
+        return bytes(encoded)
+
+    def _decode_bitfield(self, payload, piece_count):
+        """Convert a received bitfield payload into a list of piece flags"""
+        bits = []
+        for index in range(piece_count):
+            byte_index = index // 8
+            bit_index = index % 8
+            if byte_index >= len(payload):
+                bits.append(0)
+            else:
+                bits.append((payload[byte_index] >> (7 - bit_index)) & 1)
+        return bits
+
+    def _recv_exact(self, peer_socket, num_bytes):
+        """Receive an exact number of bytes or return None on disconnect"""
+
+        data = b""
+        while len(data) < num_bytes:
+            chunk = peer_socket.recv(num_bytes - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return data
+
+    def _recv_message(self, peer_socket):
+        """Receive and parse a single protocol message"""
+        length_bytes = self._recv_exact(peer_socket, 4)
+        if not length_bytes or len(length_bytes) < 4:
+            return None
+
+        message_length = struct.unpack('>I', length_bytes)[0]
+        body = self._recv_exact(peer_socket, message_length)
+        if body is None:
+            return None
+
+        parsed = Message.parse_message(length_bytes + body)
+        return parsed
 
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
