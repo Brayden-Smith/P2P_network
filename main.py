@@ -50,6 +50,9 @@ if __name__ == '__main__':
 
     last_unchoke_time = time.time()
     last_optimistic_time = time.time()
+    unchoke = False
+    unchoke_optimistically = False
+
     try:
         while True:
             time.sleep(1)
@@ -57,9 +60,21 @@ if __name__ == '__main__':
             current_time = time.time()
             if current_time - last_unchoke_time >= peer.unchoking_interval:
                 last_unchoke_time = current_time
+                unchoke = True
 
             if current_time - last_optimistic_time >= peer.optimistic_unchoking_interval:
                 last_optimistic_time = current_time
+                unchoke_optimistically = True
+
+            # Calculate new preferred neighbors
+            if unchoke:
+                unchoke = False
+                peer.choose_preferred_neighbor()
+
+            # Pick a neighbor to unchoke optimistically
+            if unchoke_optimistically:
+                unchoke_optimistically = False
+                peer.choose_optimistic_neighbor()
 
             connected = peer.get_connected_peers()
             print(f"[Peer {peer.id}] Active connections: {connected}")

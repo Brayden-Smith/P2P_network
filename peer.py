@@ -11,7 +11,6 @@ import struct
 class Peer:
     def __init__(self, id):
         self.id = id
-        self.peers = []
 
         # Dictionary that takes a peer ID and returns the current connection socket with that peer
         self.connections = {}
@@ -21,8 +20,10 @@ class Peer:
         self.server_socket = None
         self.server_thread = None
 
-        # Contains data of all possible peers, loaded from Peerinfo.cfg
+        # List of dictionaries that contain all data of possible peers, loaded from Peerinfo.cfg
         self.all_peers = []
+        # List that contains possible peers, only id
+        self.peers = []
 
         self.running = True
         config = open('Common.cfg')
@@ -63,12 +64,14 @@ class Peer:
         self.download_speeds = {}
         # List of peers that are interested in this peers file data
         self.interested_neighbors = []
-        self.optimistic_neighbor = 0
+        self.optimistic_neighbor = -1
         self.preferred_neighbors = []
         # Dictionary that contains the bitfields of other peers [peer_id] -> list (bitfield)
         self.peer_bitfields = {}
         # Dictionary that describes peers that the current is interested in [peer_id] -> bool
         self.peer_interest_status = {}
+        # Dictionary that describes peers that are choking this one
+        self.choke_status = {}
 
         self.bitfield = []
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
@@ -99,6 +102,7 @@ class Peer:
                             'has_file': bool(int(parts[3]))
                         }
                         self.all_peers.append(peer_info)
+                        self.peers.append(parts[0])
             print(f"[Peer {self.id}] Loaded {len(self.all_peers)} peers from config")
         except Exception as e:
             print(f"[Peer {self.id}] Error reading peer info: {e}")
@@ -187,6 +191,9 @@ class Peer:
 
             self._handle_bitfield(peer_id, payload, client_socket)
 
+            # Assume connection starts off as choked
+            self.choke_status[peer_id] = True
+
             self._listen_for_messages(client_socket, peer_id)
 
         except Exception as e:
@@ -274,6 +281,9 @@ class Peer:
                 raise ValueError(f"{peer_id} sent non-bitfield as first message")
 
             self._handle_bitfield(peer_id, payload, peer_socket)
+
+            # Assume connection starts off as choked
+            self.choke_status[peer_id] = True
 
             self._listen_for_messages(peer_socket, peer_id)
 
@@ -405,6 +415,10 @@ class Peer:
             self._handle_not_interested(peer_id)
         elif msg_type == "have":
             self._handle_have(peer_id, payload, peer_socket)
+        elif msg_type == "choke":
+            self._handle_choke(peer_id)
+        elif msg_type == "unchoke":
+            self._handle_unchoke(peer_id)
         else:
             # Future handlers will cover other message types
             pass
@@ -442,6 +456,14 @@ class Peer:
 
         self._evaluate_interest(peer_id, peer_socket)
 
+    def _handle_choke(self, peer_id):
+        self.choke_status[peer_id] = True
+        self._log_event(f"Peer {self.id} received the 'choke' message from {peer_id}.")
+
+    def _handle_unchoke(self, peer_id):
+        self.choke_status[peer_id] = False
+        self._log_event(f"Peer {self.id} received the 'unchoke' message from {peer_id}.")
+
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
         with self.connection_lock:
@@ -457,28 +479,60 @@ class Peer:
         self.received_bytes = {}
 
     def choose_preferred_neighbor(self):
+        # Choke previous preferred neighbors
+        old_neighbors = self.preferred_neighbors
+
         self.preferred_neighbors = []
+        # If current peer has all the file, then it randomly chooses from those interested
+        if self.hasPieces:
+            neighbors = self.interested_neighbors[:]
+            random.shuffle(neighbors)
+            count = min(len(neighbors), self.neighbor_count)
+            self.preferred_neighbors = neighbors[:count]
+        else:
+            self.calculate_download()
 
-        self.calculate_download()
+            neighbors = list(self.download_speeds.items())
+            random.shuffle(neighbors)  # Shuffle to handle ties randomly
+            neighbors.sort(key=lambda x: x[1], reverse=True)  # Sort by download speed descending
 
-        neighbors = list(self.download_speeds.items())
-        random.shuffle(neighbors)  # Shuffle to handle ties randomly
-        neighbors.sort(key=lambda x: x[1], reverse=True)  # Sort by download speed descending
+            # Only the top interested neighbors are chosen as preferred
+            interested_neighbors = [peer_id for peer_id, _ in neighbors if peer_id in self.interested_neighbors]
+            count = min(len(interested_neighbors), self.neighbor_count)
+            top_neighbors = interested_neighbors[:count]
+            self.preferred_neighbors = [peer_id for peer_id in top_neighbors]
 
-        top_neighbors = neighbors[:self.neighbor_count]
-        self.preferred_neighbors = [peer_id for peer_id, _ in top_neighbors]
+        # Unchokes new neighbors
+        for peer_id in self.preferred_neighbors:
+            if peer_id not in old_neighbors and peer_id != self.optimistic_neighbor:
+                self.connections[peer_id].send(Message.create_message("unchoke"))
+
+        # Chokes old neighbors not currently preferred or optimistic
+        for peer_id in old_neighbors:
+            if peer_id not in self.preferred_neighbors and peer_id != self.optimistic_neighbor:
+                self.connections[peer_id].send(Message.create_message("choke"))
 
     def choose_optimistic_neighbor(self):
         candidates = []
+        old_optimistic_neighbor = self.optimistic_neighbor
         for peer in self.interested_neighbors:
             # if it is not a preferred neighbor it is choked
             if peer not in self.preferred_neighbors:
                 candidates.append(peer)
 
         if len(candidates) == 0:
-            self.optimistic_neighbor = 0
+            self.optimistic_neighbor = -1
         else:
             self.optimistic_neighbor = random.choice(candidates)
+
+        if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
+            self.connections[self.optimistic_neighbor].send(Message.create_message("unchoke"))
+        if (old_optimistic_neighbor != -1 and old_optimistic_neighbor != self.optimistic_neighbor and
+                old_optimistic_neighbor not in self.preferred_neighbors):
+            self.connections[old_optimistic_neighbor].send(Message.create_message("choke"))
+
+    def request_pieces(self):
+        pass
 
     def shutdown(self):
         """Gracefully shutdown all connections"""
