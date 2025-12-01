@@ -13,19 +13,28 @@ class Peer:
         self.id = id
         self.peers = []
 
+        # Dictionary that takes a peer ID and returns the current connection socket with that peer
         self.connections = {}
         self.connection_lock = threading.Lock()
+
+        # Current Peer's server that accepts connections from other peers
         self.server_socket = None
         self.server_thread = None
+
+        # Contains data of all possible peers, loaded from Peerinfo.cfg
         self.all_peers = []
+
         self.running = True
         config = open('Common.cfg')
         setup = config.read().split()
         config.close()
 
+        # Number of peers to send data to and unchoking details
         self.neighbor_count = int(setup[1])
         self.unchoking_interval = float(setup[3])
         self.optimistic_unchoking_interval = float(setup[5])
+
+        # Attributes of file being transferred
         self.file_name = setup[7]
         self.file_size = float(setup[9])
         self.piece_size = float(setup[11])
@@ -52,10 +61,13 @@ class Peer:
 
         self.received_bytes = {}
         self.download_speeds = {}
+        # List of peers that are interested in this peers file data
         self.interested_neighbors = []
         self.optimistic_neighbor = 0
         self.preferred_neighbors = []
+        # Dictionary that contains the bitfields of other peers [peer_id] -> list (bitfield)
         self.peer_bitfields = {}
+        # Dictionary that describes peers that the current is interested in [peer_id] -> bool
         self.peer_interest_status = {}
 
         self.bitfield = []
@@ -97,7 +109,7 @@ class Peer:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host_name, self.port))
-            self.server_socket.listen(10)
+            self.server_socket.listen(len(self.all_peers))
 
             print(f"[Peer {self.id}] Server listening on {self.host_name}:{self.port}")
 
@@ -107,13 +119,14 @@ class Peer:
         except Exception as e:
             print(f"[Peer {self.id}] Error starting server: {e}")
 
+    # TODO: Timeouts have been disabled for the sake of testing
     def _accept_connections(self):
         """Accept incoming connections (runs in thread)"""
         print(f"[Peer {self.id}] Waiting for incoming connections...")
 
         while self.running:
             try:
-                self.server_socket.settimeout(1.0)
+                #self.server_socket.settimeout(1.0)
 
                 try:
                     client_socket, client_address = self.server_socket.accept()
@@ -193,6 +206,7 @@ class Peer:
         """Connect to all peers that started before this one"""
         print(f"[Peer {self.id}] Connecting to previous peers...")
 
+        # TODO: Verify peers are in order of ID number, or we have to do it based on order in cfg file
         for peer_info in self.all_peers:
             if peer_info['id'] < self.id:
                 self._connect_to_peer(peer_info)
@@ -207,7 +221,7 @@ class Peer:
             print(f"[Peer {self.id}] Connecting to Peer {peer_id} at {peer_host}:{peer_port}")
 
             peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            peer_socket.settimeout(10.0)
+            #peer_socket.settimeout(10.0)
             peer_socket.connect((peer_host, peer_port))
 
             print(f"[Peer {self.id}] Successfully connected to Peer {peer_id}")

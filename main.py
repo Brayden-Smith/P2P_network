@@ -47,20 +47,23 @@ if __name__ == '__main__':
     print(f"\n[Peer {peer.id}] Connected to {len(connected_peers)} peer(s): {connected_peers}")
     
     print(f"\n[Peer {peer.id}] Running... Press Ctrl+C to exit")
+
+    last_unchoke_time = time.time()
+    last_optimistic_time = time.time()
     try:
         while True:
-            last_unchoke_time = time.time()
-            last_optimistic_time = time.time()
+            time.sleep(1)
 
             current_time = time.time()
             if current_time - last_unchoke_time >= peer.unchoking_interval:
                 last_unchoke_time = current_time
 
             if current_time - last_optimistic_time >= peer.optimistic_unchoking_interval:
-                peer.choose_optimistic_neighbor()
                 last_optimistic_time = current_time
 
             connected = peer.get_connected_peers()
             print(f"[Peer {peer.id}] Active connections: {connected}")
+
+
     except KeyboardInterrupt:
         peer.shutdown()
