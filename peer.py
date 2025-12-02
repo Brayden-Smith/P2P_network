@@ -55,13 +55,16 @@ class Peer:
         self.port = int(selected_line[2])
         self.file_complete = bool(int(selected_line[3]))
 
-        if not os.path.exists("peer_" + str(self.id)):
-            os.mkdir("peer_" + str(self.id))
+        self.peer_dir = os.path.join("peer_" + str(self.id))
+        self.file_path = os.path.join(self.peer_dir, self.file_name)
+
+        if not os.path.exists(self.peer_dir):
+            os.mkdir(self.peer_dir)
 
         # Create empty file as placeholder of data (if not already there)
-        if not os.path.exists("peer_" + str(self.id) + "\\" + self.file_name):
-            file = open("peer_" + str(self.id) + "\\" + self.file_name, "wb")
-            file.truncate(self.file_size)
+        if not os.path.exists(self.file_path):
+            with open(self.file_path, "wb") as file:
+                file.truncate(self.file_size)
 
         # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
@@ -478,8 +481,8 @@ class Peer:
         self.choke_status[peer_id] = False
         self._log_event(f"Peer {self.id} received the 'unchoke' message from {peer_id}.")
         request_thread = threading.Thread(
-            target=self.request_pieces(peer_id),
-            args=[peer_id],
+            target=self.request_pieces,
+            args=(peer_id,),
             daemon=True
         )
         request_thread.start()
@@ -601,18 +604,16 @@ class Peer:
 
     def read_file(self, piece_index, size):
         offset = piece_index * self.piece_size
-        file = open("peer_" + str(self.id) + "//" + self.file_name, 'rb')
-        file.seek(offset)
-        data = file.read(size)
-        file.close()
+        with open(self.file_path, 'rb') as file:
+            file.seek(offset)
+            data = file.read(size)
         return data
 
     def write_file(self, piece_index, data):
         offset = piece_index * self.piece_size
-        file = open("peer_" + str(self.id) + "//" + self.file_name, 'r+b')
-        file.seek(offset)
-        file.write(data)
-        file.close()
+        with open(self.file_path, 'r+b') as file:
+            file.seek(offset)
+            file.write(data)
 
 
     def shutdown(self):
