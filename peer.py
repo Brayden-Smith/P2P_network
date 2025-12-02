@@ -68,7 +68,7 @@ class Peer:
             with open(self.file_path, "wb") as file:
                 file.truncate(self.file_size)
 
-        # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
+        #TODO: Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
         self.received_bytes = {}
@@ -87,14 +87,22 @@ class Peer:
         self.pieces_requested = []
 
         self.bitfield = []
+        num_of_pieces = math.ceil(self.file_size / self.piece_size)
+        #bitfield has to be byte complete with some zero's appended
+        #this shows how many bytes in the bit field are required
+        self.bitfield_size = math.ceil(num_of_pieces / 8)
         self.piece_count = 0
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
         if(self.file_complete):
-            self.bitfield = [1] * math.ceil(self.file_size / self.piece_size)
-            self.hasPieces = True
-            self.piece_count = math.ceil(self.file_size / self.piece_size)
+            self.bitfield = [1] * num_of_pieces
+            #if we are not already bytecomplete
+            if(num_of_pieces % 8 != 0):
+                #loop for how many bits we need to fill the last byte
+                for i in range(8-(num_of_pieces % 8)):
+                    self.bitfield.append(0)
+            self.piece_count = num_of_pieces
         else:
-            self.bitfield = [0] * math.ceil(self.file_size / self.piece_size)
+            self.bitfield = [0] * self.bitfield_size
             self.hasPieces = False
 
         self._read_all_peers()

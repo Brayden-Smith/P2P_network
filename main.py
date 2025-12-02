@@ -1,6 +1,4 @@
 import sys
-import socket
-import message
 import time
 import signal
 from peer import Peer
@@ -13,15 +11,8 @@ def signal_handler(sig, frame):
         peer.shutdown()
     sys.exit(0)
 
-
-def print_hi(name):
-    print(f'Hi, {name}')
-
-
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
-    
-    print_hi('PyCharm')
     
     if len(sys.argv) < 2:
         print("Usage: python main.py <peer_id>")
