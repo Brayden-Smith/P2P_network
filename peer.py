@@ -234,10 +234,8 @@ class Peer:
                 with self.connection_lock:
                     if peer_id in self.connections:
                         del self.connections[peer_id]
-                if peer_id in self.peer_bitfields:
-                    del self.peer_bitfields[peer_id]
-                if peer_id in self.peer_interest_status:
-                    del self.peer_interest_status[peer_id]
+                if peer_id in self.choke_status:
+                    self.choke_status[peer_id] = True
             client_socket.close()
 
     def _connect_to_previous_peers(self):
@@ -317,10 +315,8 @@ class Peer:
             with self.connection_lock:
                 if peer_id in self.connections:
                     del self.connections[peer_id]
-            if peer_id in self.peer_bitfields:
-                del self.peer_bitfields[peer_id]
-            if peer_id in self.peer_interest_status:
-                del self.peer_interest_status[peer_id]
+            if peer_id in self.choke_status:
+                self.choke_status[peer_id] = True
             peer_socket.close()
             print(f"[Peer {self.id}] Closed connection with Peer {peer_id}")
 
@@ -573,6 +569,7 @@ class Peer:
             return False
 
         # Check all known peers from config
+
         for peer_info in self.all_peers:
             peer_id = peer_info['id']
             if peer_id == self.id:
