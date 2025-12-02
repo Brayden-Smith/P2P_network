@@ -84,23 +84,19 @@ class Peer:
         # List of pieces that are currently being retrieved, stops redundancy
         self.pieces_requested = []
 
-        self.bitfield = []
-        num_of_pieces = math.ceil(self.file_size / self.piece_size)
-        #bitfield has to be byte complete with some zero's appended
-        #this shows how many bytes in the bit field are required
-        self.bitfield_size = math.ceil(num_of_pieces / 8)
+        self.num_of_pieces = math.ceil(self.file_size / self.piece_size)
+        # bitfield is stored as bytearray - each bit represents a piece
+        self.bitfield_size = math.ceil(self.num_of_pieces / 8)
+        self.bitfield = bytearray(self.bitfield_size)
         self.piece_count = 0
-        self.hasPieces = True #to make it so we don't check massive arrays for a 1
-        if(self.file_complete):
-            self.bitfield = [1] * num_of_pieces
-            #if we are not already bytecomplete
-            if(num_of_pieces % 8 != 0):
-                #loop for how many bits we need to fill the last byte
-                for i in range(8-(num_of_pieces % 8)):
-                    self.bitfield.append(0)
-            self.piece_count = num_of_pieces
+        self.hasPieces = True  # to make it so we don't check massive arrays for a 1
+        if self.file_complete:
+            # Set all piece bits to 1
+            for i in range(self.num_of_pieces):
+                self._set_bit(i)
+            self.piece_count = self.num_of_pieces
         else:
-            self.bitfield = [0] * self.bitfield_size
+            # bitfield already initialized to all zeros
             self.hasPieces = False
 
         self._read_all_peers()
@@ -333,6 +329,30 @@ class Peer:
         message = Message.create_message("bitfield", encoded)
         peer_socket.sendall(message)
 
+    def _encode_bitfield(self):
+        """Return the bitfield bytes for wire protocol"""
+        return bytes(self.bitfield)
+
+    def _set_bit(self, piece_index):
+        """Set a bit in the bitfield bytearray"""
+        byte_index = piece_index // 8
+        bit_offset = 7 - (piece_index % 8)
+        self.bitfield[byte_index] |= (1 << bit_offset)
+
+    def _get_bit(self, piece_index):
+        """Get a bit from a bitfield bytearray"""
+        byte_index = piece_index // 8
+        bit_offset = 7 - (piece_index % 8)
+        return (self.bitfield[byte_index] >> bit_offset) & 1
+
+    def _get_bit_from(self, bitfield, piece_index):
+        """Get a bit from any bitfield bytearray"""
+        byte_index = piece_index // 8
+        bit_offset = 7 - (piece_index % 8)
+        if byte_index >= len(bitfield):
+            return 0
+        return (bitfield[byte_index] >> bit_offset) & 1
+
     def _handle_bitfield(self, peer_id, payload, peer_socket):
         """Process a received bitfield and express interest if needed"""
         remote_bitfield = bytearray(payload)
@@ -342,15 +362,10 @@ class Peer:
 
     def _should_send_interested(self, remote_bitfield):
         """Determine if the remote peer has pieces we need"""
-        #resulting bytearray represents pices we DO NOT have AND pieces peer DOES have
-        pieces_downloadable = bytearray(remote_bitfield)
-        for i in range(len(self.bitfield)):
-            pieces_downloadable[i] = ~self.bitfield[i] & remote_bitfield[i]
-
-
-        #if there are any pieces with that criterion, return true
-        if any(pieces_downloadable):
-            return True
+        # Check if remote has any piece we don't have
+        for i in range(self.num_of_pieces):
+            if self._get_bit_from(remote_bitfield, i) and not self._get_bit(i):
+                return True
         return False
 
     def _evaluate_interest(self, peer_id, peer_socket):
@@ -445,17 +460,17 @@ class Peer:
         piece_index = struct.unpack('>I', payload)[0]
         self._log_event(f"Peer {self.id} received the 'have' message from {peer_id} for the piece {piece_index}.")
 
-        with self.data_lock:
-            remote_bitfield = self.peer_bitfields.get(peer_id)
-            if remote_bitfield and 0 <= piece_index < len(remote_bitfield):
-                remote_bitfield[piece_index] = 1
-            else:
-                # If we didn't get an initial bitfield, create a sparse representation
-                piece_count = len(self.bitfield)
-                remote_bitfield = [0] * piece_count
-                if 0 <= piece_index < piece_count:
-                    remote_bitfield[piece_index] = 1
-                self.peer_bitfields[peer_id] = remote_bitfield
+        remote_bitfield = self.peer_bitfields.get(peer_id)
+        if remote_bitfield is None:
+            # Create empty bitfield if we don't have one
+            remote_bitfield = bytearray(self.bitfield_size)
+            self.peer_bitfields[peer_id] = remote_bitfield
+
+        # Set the bit for this piece
+        if 0 <= piece_index < self.num_of_pieces:
+            byte_index = piece_index // 8
+            bit_offset = 7 - (piece_index % 8)
+            remote_bitfield[byte_index] |= (1 << bit_offset)
 
         self._evaluate_interest(peer_id, peer_socket)
 
@@ -495,16 +510,14 @@ class Peer:
                         f" pieces it has is {self.piece_count}.")
 
         # Update attributes after obtaining new piece
-        with self.data_lock:
-            self.piece_count += 1
-            self.bitfield[piece_index] = 1
-            if piece_index in self.pieces_requested:
-                self.pieces_requested.remove(piece_index)
+        self.piece_count += 1
+        self._set_bit(piece_index)
+        if piece_index in self.pieces_requested:
+            self.pieces_requested.remove(piece_index)
         if self.received_bytes.get(peer_id):
             self.received_bytes[peer_id] += len(data)
         else:
             self.received_bytes[peer_id] = len(data)
-        self.pieces_requested.remove(piece_index)
 
         # Broadcast new find to peers
         with self.connection_lock:
@@ -525,14 +538,20 @@ class Peer:
 
     def has_complete_file(self):
         """Check if this peer has all pieces"""
-        return all(bit == 1 for bit in self.bitfield)
+        for i in range(self.num_of_pieces):
+            if not self._get_bit(i):
+                return False
+        return True
 
     def _peer_has_complete_file(self, peer_id):
         """Check if a specific peer has all pieces based on their bitfield"""
-        bitfield = self.peer_bitfields.get(peer_id, [])
+        bitfield = self.peer_bitfields.get(peer_id)
         if not bitfield:
             return False
-        return all(bit == 1 for bit in bitfield)
+        for i in range(self.num_of_pieces):
+            if not self._get_bit_from(bitfield, i):
+                return False
+        return True
 
     def all_peers_complete(self):
         """Check if ALL peers (including self) have the complete file"""
@@ -619,7 +638,7 @@ class Peer:
         old_optimistic_neighbor = self.optimistic_neighbor
         for peer in self.interested_neighbors:
             # if it is not a preferred neighbor or the old optimistic it is choked
-            if peer not in self.preferred_neighbors and not old_optimistic_neighbor:
+            if peer not in self.preferred_neighbors and peer != old_optimistic_neighbor:
                 candidates.append(peer)
 
         if len(candidates) == 0:
@@ -645,9 +664,14 @@ class Peer:
     def request_pieces(self, peer_id):
         while not self.choke_status.get(peer_id, True) and self.peer_interest_status.get(peer_id, False):
             new_pieces = []
-            peer_bitfield = self.peer_bitfields.get(peer_id, [])
-            for index, has_piece in enumerate(peer_bitfield):
-                if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
+            peer_bitfield = self.peer_bitfields.get(peer_id)
+            if not peer_bitfield:
+                break
+            # Find pieces the peer has that we don't
+            for index in range(self.num_of_pieces):
+                if (self._get_bit_from(peer_bitfield, index) and
+                    not self._get_bit(index) and
+                    index not in self.pieces_requested):
                     new_pieces.append(index)
             if not new_pieces:
                 break
