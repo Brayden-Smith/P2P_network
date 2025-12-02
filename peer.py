@@ -108,6 +108,7 @@ class Peer:
 
         if self.file_complete:
             self.bitfield = self.ideal_bitfield
+            self.piece_count = self.num_of_pieces
 
         self._read_all_peers()
         self._start_server()
@@ -300,6 +301,8 @@ class Peer:
             self._log_event(f"Peer {self.id} makes a connection to Peer {peer_id}.")
 
             self._send_bitfield(peer_socket)
+
+
 
             # Assume connection starts off as choked
             self.choke_status[peer_id] = True
