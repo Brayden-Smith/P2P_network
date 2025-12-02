@@ -58,11 +58,11 @@ if __name__ == '__main__':
             time.sleep(1)
 
             current_time = time.time()
-            if current_time - last_unchoke_time >= peer.unchoking_interval:
+            if current_time - last_unchoke_time >= 1:
                 last_unchoke_time = current_time
                 unchoke = True
 
-            if current_time - last_optimistic_time >= peer.optimistic_unchoking_interval:
+            if current_time - last_optimistic_time >= 1:
                 last_optimistic_time = current_time
                 unchoke_optimistically = True
 
@@ -70,6 +70,7 @@ if __name__ == '__main__':
             if unchoke:
                 unchoke = False
                 peer.choose_preferred_neighbor()
+                peer.received_bytes.clear()
 
             # Pick a neighbor to unchoke optimistically
             if unchoke_optimistically:

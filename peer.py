@@ -37,8 +37,9 @@ class Peer:
 
         # Attributes of file being transferred
         self.file_name = setup[7]
-        self.file_size = float(setup[9])
-        self.piece_size = float(setup[11])
+        self.file_size = int(setup[9])
+        self.piece_size = int(setup[11])
+
 
         # Sets up identifying information for the peer
         config = open('PeerInfo.cfg')
@@ -57,6 +58,11 @@ class Peer:
         if not os.path.exists("peer_" + str(self.id)):
             os.mkdir("peer_" + str(self.id))
 
+        # Create empty file as placeholder of data (if not already there)
+        if not os.path.exists("peer_" + str(self.id) + "\\" + self.file_name):
+            file = open("peer_" + str(self.id) + "\\" + self.file_name, "wb")
+            file.truncate(self.file_size)
+
         # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
@@ -72,12 +78,16 @@ class Peer:
         self.peer_interest_status = {}
         # Dictionary that describes peers that are choking this one
         self.choke_status = {}
+        # List of pieces that are currently being retrieved, stops redundancy
+        self.pieces_requested = []
 
         self.bitfield = []
+        self.piece_count = 0
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
         if(self.file_complete):
             self.bitfield = [1] * math.ceil(self.file_size / self.piece_size)
             self.hasPieces = True
+            self.piece_count = math.ceil(self.file_size / self.piece_size)
         else:
             self.bitfield = [0] * math.ceil(self.file_size / self.piece_size)
             self.hasPieces = False
@@ -419,6 +429,10 @@ class Peer:
             self._handle_choke(peer_id)
         elif msg_type == "unchoke":
             self._handle_unchoke(peer_id)
+        elif msg_type == "request":
+            self._handle_request(peer_id, payload)
+        elif msg_type == "piece":
+            self._handle_piece(peer_id, payload)
         else:
             # Future handlers will cover other message types
             pass
@@ -463,6 +477,45 @@ class Peer:
     def _handle_unchoke(self, peer_id):
         self.choke_status[peer_id] = False
         self._log_event(f"Peer {self.id} received the 'unchoke' message from {peer_id}.")
+        request_thread = threading.Thread(
+            target=self.request_pieces(peer_id),
+            args=[peer_id],
+            daemon=True
+        )
+        request_thread.start()
+
+    def _handle_request(self, peer_id, payload):
+        """Send the requested file data to the peer"""
+        if len(payload) != 4:
+            raise ValueError("Invalid 'have' payload length")
+
+        piece_index = struct.unpack('>I', payload)[0]
+        data = self.read_file(piece_index, self.piece_size)
+        message = Message.create_message("piece", struct.pack(">I", piece_index) + data)
+        self.connections[peer_id].send(message)
+
+    def _handle_piece(self, peer_id, payload):
+        """Download the received piece and update"""
+        piece_index = struct.unpack(">I", payload[:4])[0]
+        data = payload[4:]
+        self.write_file(piece_index, data)
+
+        self._log_event(f"Peer {self.id}  has downloaded the piece {piece_index} from {peer_id}. Now the number of"
+                        f" pieces it has is {self.piece_count}.")
+
+        # Update attributes after obtaining new piece
+        self.piece_count += 1
+        self.bitfield[piece_index] = 1
+        if self.received_bytes.get(peer_id):
+            self.received_bytes[peer_id] += len(data)
+        else:
+            self.received_bytes[peer_id] = len(data)
+        self.pieces_requested.remove(piece_index)
+
+        # Broadcast new find to peers
+        for peer, psocket in self.connections.items():
+            psocket.send(Message.create_message("have", struct.pack(">I", piece_index)))
+            self._evaluate_interest(peer, psocket)
 
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
@@ -531,8 +584,36 @@ class Peer:
                 old_optimistic_neighbor not in self.preferred_neighbors):
             self.connections[old_optimistic_neighbor].send(Message.create_message("choke"))
 
-    def request_pieces(self):
-        pass
+    def request_pieces(self, peer_id):
+        while not self.choke_status[peer_id] and self.peer_interest_status[peer_id]:
+            new_pieces = []
+            for index, has_piece in enumerate(self.peer_bitfields[peer_id]):
+                if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
+                    new_pieces.append(index)
+            # TODO: Slow down the rate of request?
+            if not new_pieces:
+                break
+            new_piece = random.choice(new_pieces)
+
+            # TODO: needs to remove from pieces_requested if the server refuses to send a piece
+            self.connections[peer_id].send(Message.create_message("request", struct.pack(">I", new_piece)))
+            self.pieces_requested.append(new_piece)
+
+    def read_file(self, piece_index, size):
+        offset = piece_index * self.piece_size
+        file = open("peer_" + str(self.id) + "//" + self.file_name, 'rb')
+        file.seek(offset)
+        data = file.read(size)
+        file.close()
+        return data
+
+    def write_file(self, piece_index, data):
+        offset = piece_index * self.piece_size
+        file = open("peer_" + str(self.id) + "//" + self.file_name, 'r+b')
+        file.seek(offset)
+        file.write(data)
+        file.close()
+
 
     def shutdown(self):
         """Gracefully shutdown all connections"""
