@@ -630,7 +630,8 @@ class Peer:
             preferred_neigh_str += str(peer_id) +", "
         preferred_neigh_str = preferred_neigh_str[:-2]
 
-        self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
+        if old_neighbors != self.preferred_neighbors:
+            self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
 
         # Unchokes new neighbors
         with self.connection_lock:
@@ -664,7 +665,8 @@ class Peer:
         else:
             self.optimistic_neighbor = random.choice(candidates)
 
-        self._log_event(f"Peer {self.id} has the optimistically unchoked neighbor {self.optimistic_neighbor}")
+        if self.optimistic_neighbor != old_optimistic_neighbor:
+            self._log_event(f"Peer {self.id} has the optimistically unchoked neighbor {self.optimistic_neighbor}")
 
         with self.connection_lock:
             if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
