@@ -466,7 +466,7 @@ class Peer:
                 self._set_bit(piece_index, remote_bitfield)
             else:
                 # If we didn't get an initial bitfield, create a sparse representation
-                remote_bitfield = bytearray(self.num_of_pieces)
+                remote_bitfield = bytearray(self.bitfield_size)
                 self._set_bit(piece_index, remote_bitfield)
                 self.peer_bitfields[peer_id] = remote_bitfield
 
