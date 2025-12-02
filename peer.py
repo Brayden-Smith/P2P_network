@@ -507,8 +507,8 @@ class Peer:
         data = payload[4:]
         self.write_file(piece_index, data)
 
-        self._log_event(f"Peer {self.id} has downloaded the piece {piece_index} from {peer_id}. Now the number of"
-                        f" pieces it has is {self.piece_count}.")
+        if piece_index >= self.num_of_pieces:
+            raise ValueError(f"Peer {peer_id} sent invalid piece index {piece_index}")
 
         # Update attributes after obtaining new piece
         with self.data_lock:
@@ -523,6 +523,9 @@ class Peer:
 
         with self.bitfield_condition:
             self.bitfield_condition.notify_all()
+
+        self._log_event(f"Peer {self.id} has downloaded the piece {piece_index} from {peer_id}. Now the number of"
+                        f" pieces it has is {self.piece_count}.")
 
         self.file_complete = self.has_complete_file()
         #this can only run once as we will stop requesting once downloaded
@@ -564,7 +567,7 @@ class Peer:
 
     def all_peers_complete(self):
         """Check if ALL peers (including self) have the complete file"""
-        # Check if we have complete file
+        # Chfeck if we have complete file
         if not self.file_complete:
             return False
 
