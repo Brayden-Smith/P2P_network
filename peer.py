@@ -93,7 +93,6 @@ class Peer:
 
         # bitfield already initialized to all zeros
         self.piece_count = 0
-        self.hasPieces = False
 
         self.ideal_bitfield =bytearray(self.bitfield_size)
         full_bytes = self.num_of_pieces // 8  # number of complete bytes
@@ -207,7 +206,8 @@ class Peer:
                 self.connections[peer_id] = client_socket
 
             # Exchange bitfield messages
-            self._send_bitfield(client_socket)
+            if(self.piece_count > 0):
+                self._send_bitfield(client_socket)
 
             incoming = self._recv_message(client_socket)
             if not incoming:
@@ -300,17 +300,6 @@ class Peer:
             self._log_event(f"Peer {self.id} makes a connection to Peer {peer_id}.")
 
             self._send_bitfield(peer_socket)
-
-            #TODO: server doesn't have to send bitfield
-            incoming = self._recv_message(peer_socket)
-            if not incoming:
-                raise ValueError(f"{peer_id} closed connection before sending bitfield")
-
-            msg_type, payload = incoming
-            if msg_type != "bitfield":
-                raise ValueError(f"{peer_id} sent non-bitfield as first message")
-
-            self._handle_bitfield(peer_id, payload, peer_socket)
 
             # Assume connection starts off as choked
             self.choke_status[peer_id] = True
@@ -426,6 +415,8 @@ class Peer:
 
     def _handle_message(self, peer_id, msg_type, payload, peer_socket):
         """Dispatch a message to the appropriate handler"""
+        if msg_type == "bitfield":
+            self._handle_bitfield(peer_id, payload, peer_socket)
         if msg_type == "interested":
             self._handle_interested(peer_id)
         elif msg_type == "not interested":
