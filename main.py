@@ -63,7 +63,6 @@ if __name__ == '__main__':
             if unchoke:
                 unchoke = False
                 peer.choose_preferred_neighbor()
-                peer.received_bytes.clear()
 
             # Pick a neighbor to unchoke optimistically
             if unchoke_optimistically:

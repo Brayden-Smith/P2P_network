@@ -132,7 +132,8 @@ class Peer:
                             'has_file': bool(int(parts[3]))
                         }
                         self.all_peers.append(peer_info)
-                        self.peers.append(parts[0])
+                        self.peers.append(int(parts[0]))
+                        self.received_bytes[int(parts[0])] = 0
             print(f"[Peer {self.id}] Loaded {len(self.all_peers)} peers from config")
         except Exception as e:
             print(f"[Peer {self.id}] Error reading peer info: {e}")
@@ -597,7 +598,7 @@ class Peer:
             self.download_speeds[peer_id] = self.received_bytes[peer_id] / self.unchoking_interval
 
         # reset received_bytes for next interval
-        self.received_bytes.clear()
+        self.received_bytes = dict.fromkeys(self.received_bytes, 0)
 
     def choose_preferred_neighbor(self):
         # Choke previous preferred neighbors
@@ -628,6 +629,9 @@ class Peer:
             preferred_neigh_str += str(peer_id) +", "
         preferred_neigh_str = preferred_neigh_str[:-2]
 
+        # Neighbor order shouldn't matter if its still the same ones
+        sorted(self.preferred_neighbors)
+        sorted(old_neighbors)
         if old_neighbors != self.preferred_neighbors:
             self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
 
