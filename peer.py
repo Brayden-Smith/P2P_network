@@ -90,7 +90,6 @@ class Peer:
         #this shows how many bytes in the bit field are required
         self.bitfield_size = math.ceil(num_of_pieces / 8)
         self.piece_count = 0
-        self.hasPieces = True #to make it so we don't check massive arrays for a 1
         if(self.file_complete):
             self.bitfield = [1] * num_of_pieces
             #if we are not already bytecomplete
@@ -101,7 +100,6 @@ class Peer:
             self.piece_count = num_of_pieces
         else:
             self.bitfield = [0] * self.bitfield_size
-            self.hasPieces = False
 
         self._read_all_peers()
         self._start_server()
@@ -474,6 +472,7 @@ class Peer:
         request_thread.start()
 
     def _handle_request(self, peer_id, payload):
+        #TODO: make sure person making request isn't choked
         """Send the requested file data to the peer"""
         if len(payload) != 4:
             raise ValueError("Invalid 'request' payload length")
@@ -562,7 +561,6 @@ class Peer:
         return True
 
     def calculate_download(self):
-        #TODO: ensure received bytes gets set somewhere
         """Calculate the download speed of every peer that has sent data in this interval """
         self.download_speeds = {}
         for peer_id in self.received_bytes:
