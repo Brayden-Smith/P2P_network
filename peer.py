@@ -323,7 +323,7 @@ class Peer:
 
     def _log_event(self, message):
         """Write a timestamped event to this peer's log file"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%F %T.%f")[:-3]
         self.log_file.write(f"{timestamp}: {message}\n")
         self.log_file.flush()
 
