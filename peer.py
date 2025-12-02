@@ -687,23 +687,22 @@ class Peer:
             bitfield = self.peer_interesting_bits.get(peer_id)
             new_piece = None
             count = 0
-            for index, byte in enumerate(bitfield):
-                if byte == 0:
-                    continue
-
-                for bit_offset in range(8):
-                    if byte & (1 << (7 - bit_offset)):
-                        piece_index = index * 8 + bit_offset
-
-                        if piece_index in self.pieces_requested:
-                            continue
-
-                        count += 1
-                        if random.randrange(count) == 0:
-                            new_piece = piece_index
-
-
             with self.connection_lock:
+                for index, byte in enumerate(bitfield):
+                    if byte == 0:
+                        continue
+
+                    for bit_offset in range(8):
+                        if byte & (1 << (7 - bit_offset)):
+                            piece_index = index * 8 + bit_offset
+
+                            if piece_index in self.pieces_requested:
+                                continue
+
+                            count += 1
+                            if random.randrange(count) == 0:
+                                new_piece = piece_index
+
                 if peer_id in self.connections:
                     try:
                         self.connections[peer_id].sendall(Message.create_message("request", struct.pack(">I", new_piece)))
