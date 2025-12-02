@@ -86,7 +86,7 @@ class Peer:
         self.choke_status = {}
         # List of pieces that are currently being retrieved, stops redundancy
         self.pieces_requested = []
-
+        # Total number of pieces that make up the target file
         self.num_of_pieces = math.ceil(self.file_size / self.piece_size)
         # bitfield is stored as bytearray - each bit represents a piece
         self.bitfield_size = math.ceil(self.num_of_pieces / 8)
@@ -105,7 +105,8 @@ class Peer:
 
         # Set remaining bits in the next byte
         if remaining_bits > 0:
-            self.ideal_bitfield[full_bytes] = (1 << remaining_bits) - 1
+            mask = 0b11111111
+            self.ideal_bitfield[full_bytes] = ((1 << (8 - remaining_bits)) - 1) ^ mask
 
         if self.file_complete:
             self.bitfield = self.ideal_bitfield
