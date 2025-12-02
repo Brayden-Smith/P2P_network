@@ -241,10 +241,11 @@ class Peer:
         """Connect to all peers that started before this one"""
         print(f"[Peer {self.id}] Connecting to previous peers...")
 
-        # TODO: Verify peers are in order of ID number, or we have to do it based on order in cfg file
         for peer_info in self.all_peers:
-            if peer_info['id'] < self.id:
+            if peer_info['id'] != self.id:
                 self._connect_to_peer(peer_info)
+            else:
+                break
 
     def _connect_to_peer(self, peer_info):
         """Initiate connection to a specific peer"""
