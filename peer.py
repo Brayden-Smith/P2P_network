@@ -562,6 +562,7 @@ class Peer:
         return True
 
     def calculate_download(self):
+        #TODO: ensure received bytes gets set somewhere
         """Calculate the download speed of every peer that has sent data in this interval """
         self.download_speeds = {}
         for peer_id in self.received_bytes:
@@ -576,7 +577,7 @@ class Peer:
 
         self.preferred_neighbors = []
         # If current peer has all the file, then it randomly chooses from those interested
-        if self.hasPieces:
+        if self.file_complete:
             neighbors = self.interested_neighbors[:]
             random.shuffle(neighbors)
             count = min(len(neighbors), self.neighbor_count)
@@ -617,8 +618,8 @@ class Peer:
         candidates = []
         old_optimistic_neighbor = self.optimistic_neighbor
         for peer in self.interested_neighbors:
-            # if it is not a preferred neighbor it is choked
-            if peer not in self.preferred_neighbors:
+            # if it is not a preferred neighbor or the old optimistic it is choked
+            if peer not in self.preferred_neighbors and not old_optimistic_neighbor:
                 candidates.append(peer)
 
         if len(candidates) == 0:
