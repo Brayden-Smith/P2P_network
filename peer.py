@@ -659,7 +659,7 @@ class Peer:
         old_optimistic_neighbor = self.optimistic_neighbor
         for peer in self.interested_neighbors:
             # if it is not a preferred neighbor or the old optimistic it is choked
-            if peer not in self.preferred_neighbors and not old_optimistic_neighbor:
+            if peer not in self.preferred_neighbors and peer != old_optimistic_neighbor:
                 candidates.append(peer)
 
         if len(candidates) == 0:
