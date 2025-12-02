@@ -490,12 +490,14 @@ class Peer:
     def _handle_request(self, peer_id, payload):
         """Send the requested file data to the peer"""
         if len(payload) != 4:
-            raise ValueError("Invalid 'have' payload length")
+            raise ValueError("Invalid 'request' payload length")
 
         piece_index = struct.unpack('>I', payload)[0]
         data = self.read_file(piece_index, self.piece_size)
         message = Message.create_message("piece", struct.pack(">I", piece_index) + data)
-        self.connections[peer_id].send(message)
+        with self.connection_lock:
+            if peer_id in self.connections:
+                self.connections[peer_id].sendall(message)
 
     def _handle_piece(self, peer_id, payload):
         """Download the received piece and update"""
@@ -516,14 +518,59 @@ class Peer:
         self.pieces_requested.remove(piece_index)
 
         # Broadcast new find to peers
-        for peer, psocket in self.connections.items():
-            psocket.send(Message.create_message("have", struct.pack(">I", piece_index)))
-            self._evaluate_interest(peer, psocket)
+        with self.connection_lock:
+            for peer, psocket in list(self.connections.items()):
+                try:
+                    psocket.sendall(Message.create_message("have", struct.pack(">I", piece_index)))
+                except:
+                    pass
+        # Evaluate interest after releasing lock
+        for peer in list(self.peer_bitfields.keys()):
+            if peer in self.connections:
+                self._evaluate_interest(peer, self.connections[peer])
 
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
         with self.connection_lock:
             return list(self.connections.keys())
+
+    def has_complete_file(self):
+        """Check if this peer has all pieces"""
+        return all(bit == 1 for bit in self.bitfield)
+
+    def _peer_has_complete_file(self, peer_id):
+        """Check if a specific peer has all pieces based on their bitfield"""
+        bitfield = self.peer_bitfields.get(peer_id, [])
+        if not bitfield:
+            return False
+        return all(bit == 1 for bit in bitfield)
+
+    def all_peers_complete(self):
+        """Check if ALL peers (including self) have the complete file"""
+        # Check if we have complete file
+        if not self.has_complete_file():
+            return False
+
+        # Check all known peers from config
+        for peer_info in self.all_peers:
+            peer_id = peer_info['id']
+            if peer_id == self.id:
+                continue  # Already checked self
+
+            # If peer started with file, they're complete
+            if peer_info['has_file']:
+                continue
+
+            # Check if we have their bitfield and if it's complete
+            if peer_id in self.peer_bitfields:
+                if not self._peer_has_complete_file(peer_id):
+                    return False
+            else:
+                # We don't know their status - assume not complete
+                # This handles peers we haven't connected to yet
+                return False
+
+        return True
 
     def calculate_download(self):
         """Calculate the download speed of every peer that has sent data in this interval """
@@ -559,14 +606,23 @@ class Peer:
             self.preferred_neighbors = [peer_id for peer_id in top_neighbors]
 
         # Unchokes new neighbors
-        for peer_id in self.preferred_neighbors:
-            if peer_id not in old_neighbors and peer_id != self.optimistic_neighbor:
-                self.connections[peer_id].send(Message.create_message("unchoke"))
+        with self.connection_lock:
+            for peer_id in self.preferred_neighbors:
+                if peer_id not in old_neighbors and peer_id != self.optimistic_neighbor:
+                    if peer_id in self.connections:
+                        try:
+                            self.connections[peer_id].sendall(Message.create_message("unchoke"))
+                        except:
+                            pass
 
-        # Chokes old neighbors not currently preferred or optimistic
-        for peer_id in old_neighbors:
-            if peer_id not in self.preferred_neighbors and peer_id != self.optimistic_neighbor:
-                self.connections[peer_id].send(Message.create_message("choke"))
+            # Chokes old neighbors not currently preferred or optimistic
+            for peer_id in old_neighbors:
+                if peer_id not in self.preferred_neighbors and peer_id != self.optimistic_neighbor:
+                    if peer_id in self.connections:
+                        try:
+                            self.connections[peer_id].sendall(Message.create_message("choke"))
+                        except:
+                            pass
 
     def choose_optimistic_neighbor(self):
         candidates = []
@@ -581,26 +637,43 @@ class Peer:
         else:
             self.optimistic_neighbor = random.choice(candidates)
 
-        if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
-            self.connections[self.optimistic_neighbor].send(Message.create_message("unchoke"))
-        if (old_optimistic_neighbor != -1 and old_optimistic_neighbor != self.optimistic_neighbor and
-                old_optimistic_neighbor not in self.preferred_neighbors):
-            self.connections[old_optimistic_neighbor].send(Message.create_message("choke"))
+        with self.connection_lock:
+            if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
+                if self.optimistic_neighbor in self.connections:
+                    try:
+                        self.connections[self.optimistic_neighbor].sendall(Message.create_message("unchoke"))
+                    except:
+                        pass
+            if (old_optimistic_neighbor != -1 and old_optimistic_neighbor != self.optimistic_neighbor and
+                    old_optimistic_neighbor not in self.preferred_neighbors):
+                if old_optimistic_neighbor in self.connections:
+                    try:
+                        self.connections[old_optimistic_neighbor].sendall(Message.create_message("choke"))
+                    except:
+                        pass
 
     def request_pieces(self, peer_id):
-        while not self.choke_status[peer_id] and self.peer_interest_status[peer_id]:
+        while not self.choke_status.get(peer_id, True) and self.peer_interest_status.get(peer_id, False):
             new_pieces = []
-            for index, has_piece in enumerate(self.peer_bitfields[peer_id]):
+            peer_bitfield = self.peer_bitfields.get(peer_id, [])
+            for index, has_piece in enumerate(peer_bitfield):
                 if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
                     new_pieces.append(index)
-            # TODO: Slow down the rate of request?
             if not new_pieces:
                 break
             new_piece = random.choice(new_pieces)
 
-            # TODO: needs to remove from pieces_requested if the server refuses to send a piece
-            self.connections[peer_id].send(Message.create_message("request", struct.pack(">I", new_piece)))
-            self.pieces_requested.append(new_piece)
+            with self.connection_lock:
+                if peer_id in self.connections:
+                    try:
+                        self.connections[peer_id].sendall(Message.create_message("request", struct.pack(">I", new_piece)))
+                        self.pieces_requested.append(new_piece)
+                    except:
+                        break
+                else:
+                    break
+            # Small delay to prevent CPU spin
+            time.sleep(0.01)
 
     def read_file(self, piece_index, size):
         offset = piece_index * self.piece_size
