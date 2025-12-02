@@ -67,7 +67,6 @@ class Peer:
             with open(self.file_path, "wb") as file:
                 file.truncate(self.file_size)
 
-        #TODO: Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
         self.received_bytes = {}
@@ -470,11 +469,11 @@ class Peer:
 
     def _handle_choke(self, peer_id):
         self.choke_status[peer_id] = True
-        self._log_event(f"Peer {self.id} received the 'choke' message from {peer_id}.")
+        self._log_event(f"Peer {self.id} is choked by {peer_id}.")
 
     def _handle_unchoke(self, peer_id):
         self.choke_status[peer_id] = False
-        self._log_event(f"Peer {self.id} received the 'unchoke' message from {peer_id}.")
+        self._log_event(f"Peer {self.id} is unchoked by {peer_id}.")
         request_thread = threading.Thread(
             target=self.request_pieces,
             args=(peer_id,),
@@ -504,7 +503,7 @@ class Peer:
         data = payload[4:]
         self.write_file(piece_index, data)
 
-        self._log_event(f"Peer {self.id}  has downloaded the piece {piece_index} from {peer_id}. Now the number of"
+        self._log_event(f"Peer {self.id} has downloaded the piece {piece_index} from {peer_id}. Now the number of"
                         f" pieces it has is {self.piece_count}.")
 
         # Update attributes after obtaining new piece
@@ -521,6 +520,11 @@ class Peer:
 
         with self.bitfield_condition:
             self.bitfield_condition.notify_all()
+
+        self.file_complete = self.has_complete_file()
+        #this can only run once as we will stop requesting once downloaded
+        if self.file_complete:
+            self._log_event(f"Peer {self.id} has downloaded the complete file.")
 
         # Broadcast new find to peers
         with self.connection_lock:
@@ -558,7 +562,7 @@ class Peer:
     def all_peers_complete(self):
         """Check if ALL peers (including self) have the complete file"""
         # Check if we have complete file
-        if not self.has_complete_file():
+        if not self.file_complete:
             return False
 
         # Check all known peers from config
@@ -615,6 +619,13 @@ class Peer:
             top_neighbors = interested_neighbors[:count]
             self.preferred_neighbors = [peer_id for peer_id in top_neighbors]
 
+        preferred_neigh_str = ""
+        for peer_id in self.preferred_neighbors:
+            preferred_neigh_str += str(peer_id) +", "
+        preferred_neigh_str = preferred_neigh_str[:-2]
+
+        self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
+
         # Unchokes new neighbors
         with self.connection_lock:
             for peer_id in self.preferred_neighbors:
@@ -646,6 +657,8 @@ class Peer:
             self.optimistic_neighbor = -1
         else:
             self.optimistic_neighbor = random.choice(candidates)
+
+        self._log_event(f"Peer {self.id} has the optimistically unchoked neighbor {self.optimistic_neighbor}")
 
         with self.connection_lock:
             if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
