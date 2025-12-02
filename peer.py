@@ -15,6 +15,7 @@ class Peer:
         # Dictionary that takes a peer ID and returns the current connection socket with that peer
         self.connections = {}
         self.connection_lock = threading.Lock()
+        self.bitfield_condition = threading.Condition()
 
         # Current Peer's server that accepts connections from other peers
         self.server_socket = None
@@ -509,7 +510,7 @@ class Peer:
         # Update attributes after obtaining new piece
         with self.data_lock:
             self.piece_count += 1
-            self.bitfield[piece_index] = 1
+            self._set_bit(piece_index, self.bitfield)
             if piece_index in self.pieces_requested:
                 self.pieces_requested.remove(piece_index)
         if self.received_bytes.get(peer_id):
@@ -517,6 +518,9 @@ class Peer:
         else:
             self.received_bytes[peer_id] = len(data)
         self.pieces_requested.remove(piece_index)
+
+        with self.bitfield_condition:
+            self.bitfield_condition.notify_all()
 
         # Broadcast new find to peers
         with self.connection_lock:
@@ -689,8 +693,12 @@ class Peer:
                         break
                 else:
                     break
+
+            with self.bitfield_condition:
+                while self._get_bit(new_piece, self.bitfield) == 0:
+                    self.bitfield_condition.wait()
+
             # Small delay to prevent CPU spin
-            #TODO:make a hold to wait until we receive the requested piece message
             time.sleep(0.01)
 
     def read_file(self, piece_index, size):
