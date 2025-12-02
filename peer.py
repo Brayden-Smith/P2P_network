@@ -15,6 +15,8 @@ class Peer:
         # Dictionary that takes a peer ID and returns the current connection socket with that peer
         self.connections = {}
         self.connection_lock = threading.Lock()
+        # Lock for bitfield, pieces_requested, and peer_bitfields access
+        self.data_lock = threading.Lock()
 
         # Current Peer's server that accepts connections from other peers
         self.server_socket = None
@@ -55,15 +57,18 @@ class Peer:
         self.port = int(selected_line[2])
         self.file_complete = bool(int(selected_line[3]))
 
-        if not os.path.exists("peer_" + str(self.id)):
-            os.mkdir("peer_" + str(self.id))
+        self.peer_dir = os.path.join("peer_" + str(self.id))
+        self.file_path = os.path.join(self.peer_dir, self.file_name)
+
+        if not os.path.exists(self.peer_dir):
+            os.mkdir(self.peer_dir)
 
         # Create empty file as placeholder of data (if not already there)
-        if not os.path.exists("peer_" + str(self.id) + "\\" + self.file_name):
-            file = open("peer_" + str(self.id) + "\\" + self.file_name, "wb")
-            file.truncate(self.file_size)
+        if not os.path.exists(self.file_path):
+            with open(self.file_path, "wb") as file:
+                file.truncate(self.file_size)
 
-        # Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
+        #TODO: Overwrites log, makes it better for testing. Check if it needs to be appended in docs later.
         self.log_file = open("log_peer_" + str(self.id) + ".log", "w")
 
         self.received_bytes = {}
@@ -82,14 +87,22 @@ class Peer:
         self.pieces_requested = []
 
         self.bitfield = []
+        num_of_pieces = math.ceil(self.file_size / self.piece_size)
+        #bitfield has to be byte complete with some zero's appended
+        #this shows how many bytes in the bit field are required
+        self.bitfield_size = math.ceil(num_of_pieces / 8)
         self.piece_count = 0
         self.hasPieces = True #to make it so we don't check massive arrays for a 1
         if(self.file_complete):
-            self.bitfield = [1] * math.ceil(self.file_size / self.piece_size)
-            self.hasPieces = True
-            self.piece_count = math.ceil(self.file_size / self.piece_size)
+            self.bitfield = [1] * num_of_pieces
+            #if we are not already bytecomplete
+            if(num_of_pieces % 8 != 0):
+                #loop for how many bits we need to fill the last byte
+                for i in range(8-(num_of_pieces % 8)):
+                    self.bitfield.append(0)
+            self.piece_count = num_of_pieces
         else:
-            self.bitfield = [0] * math.ceil(self.file_size / self.piece_size)
+            self.bitfield = [0] * self.bitfield_size
             self.hasPieces = False
 
         self._read_all_peers()
@@ -330,15 +343,17 @@ class Peer:
         """Process a received bitfield and express interest if needed"""
         piece_count = len(self.bitfield)
         remote_bitfield = self._decode_bitfield(payload, piece_count)
-        self.peer_bitfields[peer_id] = remote_bitfield
+        with self.data_lock:
+            self.peer_bitfields[peer_id] = remote_bitfield
 
         self._evaluate_interest(peer_id, peer_socket)
 
     def _should_send_interested(self, remote_bitfield):
         """Determine if the remote peer has pieces we need"""
-        for index, has_piece in enumerate(remote_bitfield):
-            if has_piece and not self.bitfield[index]:
-                return True
+        with self.data_lock:
+            for index, has_piece in enumerate(remote_bitfield):
+                if has_piece and not self.bitfield[index]:
+                    return True
         return False
 
     def _encode_bitfield(self):
@@ -461,16 +476,17 @@ class Peer:
         piece_index = struct.unpack('>I', payload)[0]
         self._log_event(f"Peer {self.id} received the 'have' message from {peer_id} for the piece {piece_index}.")
 
-        remote_bitfield = self.peer_bitfields.get(peer_id)
-        if remote_bitfield and 0 <= piece_index < len(remote_bitfield):
-            remote_bitfield[piece_index] = 1
-        else:
-            # If we didn't get an initial bitfield, create a sparse representation
-            piece_count = len(self.bitfield)
-            remote_bitfield = [0] * piece_count
-            if 0 <= piece_index < piece_count:
+        with self.data_lock:
+            remote_bitfield = self.peer_bitfields.get(peer_id)
+            if remote_bitfield and 0 <= piece_index < len(remote_bitfield):
                 remote_bitfield[piece_index] = 1
-            self.peer_bitfields[peer_id] = remote_bitfield
+            else:
+                # If we didn't get an initial bitfield, create a sparse representation
+                piece_count = len(self.bitfield)
+                remote_bitfield = [0] * piece_count
+                if 0 <= piece_index < piece_count:
+                    remote_bitfield[piece_index] = 1
+                self.peer_bitfields[peer_id] = remote_bitfield
 
         self._evaluate_interest(peer_id, peer_socket)
 
@@ -482,8 +498,8 @@ class Peer:
         self.choke_status[peer_id] = False
         self._log_event(f"Peer {self.id} received the 'unchoke' message from {peer_id}.")
         request_thread = threading.Thread(
-            target=self.request_pieces(peer_id),
-            args=[peer_id],
+            target=self.request_pieces,
+            args=(peer_id,),
             daemon=True
         )
         request_thread.start()
@@ -491,12 +507,14 @@ class Peer:
     def _handle_request(self, peer_id, payload):
         """Send the requested file data to the peer"""
         if len(payload) != 4:
-            raise ValueError("Invalid 'have' payload length")
+            raise ValueError("Invalid 'request' payload length")
 
         piece_index = struct.unpack('>I', payload)[0]
         data = self.read_file(piece_index, self.piece_size)
         message = Message.create_message("piece", struct.pack(">I", piece_index) + data)
-        self.connections[peer_id].send(message)
+        with self.connection_lock:
+            if peer_id in self.connections:
+                self.connections[peer_id].sendall(message)
 
     def _handle_piece(self, peer_id, payload):
         """Download the received piece and update"""
@@ -508,23 +526,71 @@ class Peer:
                         f" pieces it has is {self.piece_count}.")
 
         # Update attributes after obtaining new piece
-        self.piece_count += 1
-        self.bitfield[piece_index] = 1
+        with self.data_lock:
+            self.piece_count += 1
+            self.bitfield[piece_index] = 1
+            if piece_index in self.pieces_requested:
+                self.pieces_requested.remove(piece_index)
         if self.received_bytes.get(peer_id):
             self.received_bytes[peer_id] += len(data)
         else:
             self.received_bytes[peer_id] = len(data)
-        self.pieces_requested.remove(piece_index)
 
         # Broadcast new find to peers
-        for peer, psocket in self.connections.items():
-            psocket.send(Message.create_message("have", struct.pack(">I", piece_index)))
-            self._evaluate_interest(peer, psocket)
+        with self.connection_lock:
+            for peer, psocket in list(self.connections.items()):
+                try:
+                    psocket.sendall(Message.create_message("have", struct.pack(">I", piece_index)))
+                except:
+                    pass
+        # Evaluate interest after releasing lock
+        for peer in list(self.peer_bitfields.keys()):
+            if peer in self.connections:
+                self._evaluate_interest(peer, self.connections[peer])
 
     def get_connected_peers(self):
         """Return list of currently connected peer IDs"""
         with self.connection_lock:
             return list(self.connections.keys())
+
+    def has_complete_file(self):
+        """Check if this peer has all pieces"""
+        return all(bit == 1 for bit in self.bitfield)
+
+    def _peer_has_complete_file(self, peer_id):
+        """Check if a specific peer has all pieces based on their bitfield"""
+        bitfield = self.peer_bitfields.get(peer_id, [])
+        if not bitfield:
+            return False
+        return all(bit == 1 for bit in bitfield)
+
+    def all_peers_complete(self):
+        """Check if ALL peers (including self) have the complete file"""
+        # Check if we have complete file
+        if not self.has_complete_file():
+            return False
+
+        # Check all known peers from config
+        with self.data_lock:
+            for peer_info in self.all_peers:
+                peer_id = peer_info['id']
+                if peer_id == self.id:
+                    continue  # Already checked self
+
+                # If peer started with file, they're complete
+                if peer_info['has_file']:
+                    continue
+
+                # Check if we have their bitfield and if it's complete
+                if peer_id in self.peer_bitfields:
+                    if not self._peer_has_complete_file(peer_id):
+                        return False
+                else:
+                    # We don't know their status - assume not complete
+                    # This handles peers we haven't connected to yet
+                    return False
+
+        return True
 
     def calculate_download(self):
         """Calculate the download speed of every peer that has sent data in this interval """
@@ -560,14 +626,23 @@ class Peer:
             self.preferred_neighbors = [peer_id for peer_id in top_neighbors]
 
         # Unchokes new neighbors
-        for peer_id in self.preferred_neighbors:
-            if peer_id not in old_neighbors and peer_id != self.optimistic_neighbor:
-                self.connections[peer_id].send(Message.create_message("unchoke"))
+        with self.connection_lock:
+            for peer_id in self.preferred_neighbors:
+                if peer_id not in old_neighbors and peer_id != self.optimistic_neighbor:
+                    if peer_id in self.connections:
+                        try:
+                            self.connections[peer_id].sendall(Message.create_message("unchoke"))
+                        except:
+                            pass
 
-        # Chokes old neighbors not currently preferred or optimistic
-        for peer_id in old_neighbors:
-            if peer_id not in self.preferred_neighbors and peer_id != self.optimistic_neighbor:
-                self.connections[peer_id].send(Message.create_message("choke"))
+            # Chokes old neighbors not currently preferred or optimistic
+            for peer_id in old_neighbors:
+                if peer_id not in self.preferred_neighbors and peer_id != self.optimistic_neighbor:
+                    if peer_id in self.connections:
+                        try:
+                            self.connections[peer_id].sendall(Message.create_message("choke"))
+                        except:
+                            pass
 
     def choose_optimistic_neighbor(self):
         candidates = []
@@ -582,41 +657,66 @@ class Peer:
         else:
             self.optimistic_neighbor = random.choice(candidates)
 
-        if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
-            self.connections[self.optimistic_neighbor].send(Message.create_message("unchoke"))
-        if (old_optimistic_neighbor != -1 and old_optimistic_neighbor != self.optimistic_neighbor and
-                old_optimistic_neighbor not in self.preferred_neighbors):
-            self.connections[old_optimistic_neighbor].send(Message.create_message("choke"))
+        with self.connection_lock:
+            if self.optimistic_neighbor != -1 and self.optimistic_neighbor != old_optimistic_neighbor:
+                if self.optimistic_neighbor in self.connections:
+                    try:
+                        self.connections[self.optimistic_neighbor].sendall(Message.create_message("unchoke"))
+                    except:
+                        pass
+            if (old_optimistic_neighbor != -1 and old_optimistic_neighbor != self.optimistic_neighbor and
+                    old_optimistic_neighbor not in self.preferred_neighbors):
+                if old_optimistic_neighbor in self.connections:
+                    try:
+                        self.connections[old_optimistic_neighbor].sendall(Message.create_message("choke"))
+                    except:
+                        pass
 
     def request_pieces(self, peer_id):
-        while not self.choke_status[peer_id] and self.peer_interest_status[peer_id]:
-            new_pieces = []
-            for index, has_piece in enumerate(self.peer_bitfields[peer_id]):
-                if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
-                    new_pieces.append(index)
-            # TODO: Slow down the rate of request?
-            if not new_pieces:
-                break
-            new_piece = random.choice(new_pieces)
+        while not self.choke_status.get(peer_id, True) and self.peer_interest_status.get(peer_id, False):
+            new_piece = None
+            with self.data_lock:
+                new_pieces = []
+                peer_bitfield = self.peer_bitfields.get(peer_id, [])
+                for index, has_piece in enumerate(peer_bitfield):
+                    if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
+                        new_pieces.append(index)
+                if not new_pieces:
+                    break
+                new_piece = random.choice(new_pieces)
+                self.pieces_requested.append(new_piece)
 
-            # TODO: needs to remove from pieces_requested if the server refuses to send a piece
-            self.connections[peer_id].send(Message.create_message("request", struct.pack(">I", new_piece)))
-            self.pieces_requested.append(new_piece)
+            with self.connection_lock:
+                if peer_id in self.connections:
+                    try:
+                        self.connections[peer_id].sendall(Message.create_message("request", struct.pack(">I", new_piece)))
+                    except:
+                        # Remove from requested if send failed
+                        with self.data_lock:
+                            if new_piece in self.pieces_requested:
+                                self.pieces_requested.remove(new_piece)
+                        break
+                else:
+                    # Remove from requested if no connection
+                    with self.data_lock:
+                        if new_piece in self.pieces_requested:
+                            self.pieces_requested.remove(new_piece)
+                    break
+            # Small delay to prevent CPU spin
+            time.sleep(0.01)
 
     def read_file(self, piece_index, size):
         offset = piece_index * self.piece_size
-        file = open("peer_" + str(self.id) + "//" + self.file_name, 'rb')
-        file.seek(offset)
-        data = file.read(size)
-        file.close()
+        with open(self.file_path, 'rb') as file:
+            file.seek(offset)
+            data = file.read(size)
         return data
 
     def write_file(self, piece_index, data):
         offset = piece_index * self.piece_size
-        file = open("peer_" + str(self.id) + "//" + self.file_name, 'r+b')
-        file.seek(offset)
-        file.write(data)
-        file.close()
+        with open(self.file_path, 'r+b') as file:
+            file.seek(offset)
+            file.write(data)
 
 
     def shutdown(self):

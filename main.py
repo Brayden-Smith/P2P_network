@@ -1,6 +1,4 @@
 import sys
-import socket
-import message
 import time
 import signal
 from peer import Peer
@@ -13,15 +11,8 @@ def signal_handler(sig, frame):
         peer.shutdown()
     sys.exit(0)
 
-
-def print_hi(name):
-    print(f'Hi, {name}')
-
-
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
-    
-    print_hi('PyCharm')
     
     if len(sys.argv) < 2:
         print("Usage: python main.py <peer_id>")
@@ -58,11 +49,13 @@ if __name__ == '__main__':
             time.sleep(1)
 
             current_time = time.time()
-            if current_time - last_unchoke_time >= 1:
+
+            # Use config values for intervals (not hardcoded)
+            if current_time - last_unchoke_time >= peer.unchoking_interval:
                 last_unchoke_time = current_time
                 unchoke = True
 
-            if current_time - last_optimistic_time >= 1:
+            if current_time - last_optimistic_time >= peer.optimistic_unchoking_interval:
                 last_optimistic_time = current_time
                 unchoke_optimistically = True
 
@@ -78,8 +71,13 @@ if __name__ == '__main__':
                 peer.choose_optimistic_neighbor()
 
             connected = peer.get_connected_peers()
-            print(f"[Peer {peer.id}] Active connections: {connected}")
+            print(f"[Peer {peer.id}] Active connections: {connected}, Pieces: {peer.piece_count}/{len(peer.bitfield)}")
 
+            # Check termination condition: all peers have complete file
+            if peer.all_peers_complete():
+                print(f"\n[Peer {peer.id}] All peers have complete file. Terminating...")
+                peer.shutdown()
+                break
 
     except KeyboardInterrupt:
         peer.shutdown()
