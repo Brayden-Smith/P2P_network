@@ -492,7 +492,10 @@ class Peer:
 
     def _handle_request(self, peer_id, payload):
         """Send the requested file data to the peer"""
-        #TODO:cut off if choked before message arrived to ensure only sending to correct neighbors
+        #only upload to optimistic neighbor and preferred neighbors
+        if peer_id != self.optimistic_neighbor and peer_id not in self.interested_neighbors:
+            return
+
         if len(payload) != 4:
             raise ValueError("Invalid 'request' payload length")
 
