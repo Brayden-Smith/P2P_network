@@ -568,7 +568,7 @@ class Peer:
 
     def all_peers_complete(self):
         """Check if ALL peers (including self) have the complete file"""
-        # Chfeck if we have complete file
+        # Check if we have complete file
         if not self.file_complete:
             return False
 
