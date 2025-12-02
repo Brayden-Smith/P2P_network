@@ -16,6 +16,7 @@ class Peer:
         self.connections = {}
         self.connection_lock = threading.Lock()
         self.bitfield_condition = threading.Condition()
+        self.data_lock = threading.Lock()
 
         # Current Peer's server that accepts connections from other peers
         self.server_socket = None
@@ -519,7 +520,6 @@ class Peer:
             self.received_bytes[peer_id] += len(data)
         else:
             self.received_bytes[peer_id] = len(data)
-        self.pieces_requested.remove(piece_index)
 
         with self.bitfield_condition:
             self.bitfield_condition.notify_all()

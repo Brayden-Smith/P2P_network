@@ -71,7 +71,7 @@ if __name__ == '__main__':
                 peer.choose_optimistic_neighbor()
 
             connected = peer.get_connected_peers()
-            print(f"[Peer {peer.id}] Active connections: {connected}, Pieces: {peer.piece_count}/{len(peer.bitfield)}")
+            print(f"[Peer {peer.id}] Active connections: {connected}, Pieces: {peer.piece_count}/{peer.num_of_pieces}")
 
             # Check termination condition: all peers have complete file
             if peer.all_peers_complete():
