@@ -79,7 +79,7 @@ class Peer:
         self.peer_bitfields = {}
         # Dictionary that contains the interesting bits a peer has [peer_id] -> bytearray (bitfield)
         self.peer_interesting_bits = {}
-        # Dictionary that describes peers that the current is interested in [peer_id] -> bool
+        # Dictionary that describes peers that the self is interested in [peer_id] -> bool
         self.peer_interest_status = {}
         # Dictionary that describes peers that are choking this one
         self.choke_status = {}
@@ -491,6 +491,7 @@ class Peer:
 
     def _handle_request(self, peer_id, payload):
         """Send the requested file data to the peer"""
+        #TODO:cut off if choked before message arrived to ensure only sending to correct neighbors
         if len(payload) != 4:
             raise ValueError("Invalid 'request' payload length")
 
@@ -583,14 +584,13 @@ class Peer:
         return True
 
     def calculate_download(self):
-        #TODO: ensure received bytes gets set somewhere
         """Calculate the download speed of every peer that has sent data in this interval """
         self.download_speeds = {}
         for peer_id in self.received_bytes:
             self.download_speeds[peer_id] = self.received_bytes[peer_id] / self.unchoking_interval
 
         # reset received_bytes for next interval
-        self.received_bytes = {}
+        self.received_bytes.clear()
 
     def choose_preferred_neighbor(self):
         # Choke previous preferred neighbors
@@ -685,7 +685,6 @@ class Peer:
                             new_piece = piece_index
 
 
-
             with self.connection_lock:
                 if peer_id in self.connections:
                     try:
@@ -696,6 +695,7 @@ class Peer:
                 else:
                     break
             # Small delay to prevent CPU spin
+            #TODO:make a hold to wait until we receive the requested piece message
             time.sleep(0.01)
 
     def read_file(self, piece_index, size):

@@ -56,8 +56,7 @@ class Message:
             msg_type = type2number[msg_type]
         
         message_length = 1 + len(payload)
-        if message_length > 0xFFFFFFFF:
-            raise ValueError("Message too large to fit into 4 bytes!")
+
         length_bytes = struct.pack('>I', message_length)
         type_byte = struct.pack('B', msg_type)
         
