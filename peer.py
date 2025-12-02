@@ -75,8 +75,10 @@ class Peer:
         self.interested_neighbors = []
         self.optimistic_neighbor = -1
         self.preferred_neighbors = []
-        # Dictionary that contains the bitfields of other peers [peer_id] -> list (bitfield)
+        # Dictionary that contains the bitfields of other peers [peer_id] -> bytearray (bitfield)
         self.peer_bitfields = {}
+        # Dictionary that contains the interesting bits a peer has [peer_id] -> bytearray (bitfield)
+        self.peer_interesting_bits = {}
         # Dictionary that describes peers that the current is interested in [peer_id] -> bool
         self.peer_interest_status = {}
         # Dictionary that describes peers that are choking this one
@@ -88,16 +90,25 @@ class Peer:
         # bitfield is stored as bytearray - each bit represents a piece
         self.bitfield_size = math.ceil(self.num_of_pieces / 8)
         self.bitfield = bytearray(self.bitfield_size)
+
+        # bitfield already initialized to all zeros
         self.piece_count = 0
-        self.hasPieces = True  # to make it so we don't check massive arrays for a 1
+        self.hasPieces = False
+
+        self.ideal_bitfield =bytearray(self.bitfield_size)
+        full_bytes = self.num_of_pieces // 8  # number of complete bytes
+        remaining_bits = self.num_of_pieces % 8  # leftover bits in next byte
+
+        # Set full bytes to 1111 1111
+        for i in range(full_bytes):
+            self.ideal_bitfield[i] = 0xFF
+
+        # Set remaining bits in the next byte
+        if remaining_bits > 0:
+            self.ideal_bitfield[full_bytes] = (1 << remaining_bits) - 1
+
         if self.file_complete:
-            # Set all piece bits to 1
-            for i in range(self.num_of_pieces):
-                self._set_bit(i)
-            self.piece_count = self.num_of_pieces
-        else:
-            # bitfield already initialized to all zeros
-            self.hasPieces = False
+            self.bitfield = self.ideal_bitfield
 
         self._read_all_peers()
         self._start_server()
@@ -289,6 +300,7 @@ class Peer:
 
             self._send_bitfield(peer_socket)
 
+            #TODO: server doesn't have to send bitfield
             incoming = self._recv_message(peer_socket)
             if not incoming:
                 raise ValueError(f"{peer_id} closed connection before sending bitfield")
@@ -325,53 +337,44 @@ class Peer:
 
     def _send_bitfield(self, peer_socket):
         """Send this peer's bitfield to a neighbor"""
-        encoded = self._encode_bitfield()
-        message = Message.create_message("bitfield", encoded)
+        message = Message.create_message("bitfield", self.bitfield)
         peer_socket.sendall(message)
 
-    def _encode_bitfield(self):
-        """Return the bitfield bytes for wire protocol"""
-        return bytes(self.bitfield)
-
-    def _set_bit(self, piece_index):
+    def _set_bit(self, piece_index, bitfield):
         """Set a bit in the bitfield bytearray"""
         byte_index = piece_index // 8
         bit_offset = 7 - (piece_index % 8)
-        self.bitfield[byte_index] |= (1 << bit_offset)
+        bitfield[byte_index] |= (1 << bit_offset)
 
-    def _get_bit(self, piece_index):
+    def _get_bit(self, piece_index, bitfield):
         """Get a bit from a bitfield bytearray"""
         byte_index = piece_index // 8
         bit_offset = 7 - (piece_index % 8)
-        return (self.bitfield[byte_index] >> bit_offset) & 1
-
-    def _get_bit_from(self, bitfield, piece_index):
-        """Get a bit from any bitfield bytearray"""
-        byte_index = piece_index // 8
-        bit_offset = 7 - (piece_index % 8)
-        if byte_index >= len(bitfield):
-            return 0
         return (bitfield[byte_index] >> bit_offset) & 1
 
     def _handle_bitfield(self, peer_id, payload, peer_socket):
         """Process a received bitfield and express interest if needed"""
         remote_bitfield = bytearray(payload)
         self.peer_bitfields[peer_id] = remote_bitfield
-
         self._evaluate_interest(peer_id, peer_socket)
 
-    def _should_send_interested(self, remote_bitfield):
+    def _should_send_interested(self, remote_bitfield, peer_id):
         """Determine if the remote peer has pieces we need"""
         # Check if remote has any piece we don't have
-        for i in range(self.num_of_pieces):
-            if self._get_bit_from(remote_bitfield, i) and not self._get_bit(i):
-                return True
+        pieces_downloadable = bytearray(remote_bitfield)
+        for byte_index in range(0, len(pieces_downloadable)):
+            pieces_downloadable[byte_index] = remote_bitfield[byte_index] & ~self.bitfield[byte_index]
+
+        self.peer_interesting_bits[peer_id] = pieces_downloadable
+
+        if any(pieces_downloadable):
+            return True
         return False
 
     def _evaluate_interest(self, peer_id, peer_socket):
         """Send interested/not interested message if our need state changed"""
         remote = self.peer_bitfields.get(peer_id, [])
-        interested = self._should_send_interested(remote)
+        interested = self._should_send_interested(remote, peer_id)
         previous = self.peer_interest_status.get(peer_id)
 
         if interested and previous is not True:
@@ -462,14 +465,12 @@ class Peer:
 
         with self.data_lock:
             remote_bitfield = self.peer_bitfields.get(peer_id)
-            if remote_bitfield and 0 <= piece_index < len(remote_bitfield):
-                remote_bitfield[piece_index] = 1
+            if remote_bitfield:
+                self._set_bit(piece_index, remote_bitfield)
             else:
                 # If we didn't get an initial bitfield, create a sparse representation
-                piece_count = len(self.bitfield)
-                remote_bitfield = [0] * piece_count
-                if 0 <= piece_index < piece_count:
-                    remote_bitfield[piece_index] = 1
+                remote_bitfield = bytearray(self.num_of_pieces)
+                self._set_bit(piece_index, remote_bitfield)
                 self.peer_bitfields[peer_id] = remote_bitfield
 
         self._evaluate_interest(peer_id, peer_socket)
@@ -540,20 +541,19 @@ class Peer:
 
     def has_complete_file(self):
         """Check if this peer has all pieces"""
-        for i in range(self.num_of_pieces):
-            if not self._get_bit(i):
-                return False
-        return True
+        if self.bitfield == self.ideal_bitfield:
+            return True
+        return False
 
     def _peer_has_complete_file(self, peer_id):
         """Check if a specific peer has all pieces based on their bitfield"""
         bitfield = self.peer_bitfields.get(peer_id)
         if not bitfield:
             return False
-        for i in range(self.num_of_pieces):
-            if not self._get_bit_from(bitfield, i):
-                return False
-        return True
+        if bitfield == self.ideal_bitfield: #ideal starts complete with padding
+            return True
+        return False
+
 
     def all_peers_complete(self):
         """Check if ALL peers (including self) have the complete file"""
@@ -665,14 +665,26 @@ class Peer:
 
     def request_pieces(self, peer_id):
         while not self.choke_status.get(peer_id, True) and self.peer_interest_status.get(peer_id, False):
-            new_pieces = []
-            peer_bitfield = self.peer_bitfields.get(peer_id, [])
-            for index, has_piece in enumerate(peer_bitfield):
-                if has_piece and (not self.bitfield[index]) and (index not in self.pieces_requested):
-                    new_pieces.append(index)
-            if not new_pieces:
-                break
-            new_piece = random.choice(new_pieces)
+
+            bitfield = self.peer_interesting_bits.get(peer_id)
+            new_piece = None
+            count = 0
+            for index, byte in enumerate(bitfield):
+                if byte == 0:
+                    continue
+
+                for bit_offset in range(8):
+                    if byte & (1 << (7 - bit_offset)):
+                        piece_index = index * 8 + bit_offset
+
+                        if piece_index in self.pieces_requested:
+                            continue
+
+                        count += 1
+                        if random.randrange(count) == 0:
+                            new_piece = piece_index
+
+
 
             with self.connection_lock:
                 if peer_id in self.connections:
