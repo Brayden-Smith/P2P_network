@@ -28,30 +28,55 @@ class Peer:
         self.peers = []
 
         self.running = True
-        config = open('Common.cfg')
-        setup = config.read().split()
-        config.close()
+
+        # Parse Common.cfg with validation
+        with open('Common.cfg') as config:
+            setup = config.read().split()
+
+        if len(setup) < 12:
+            raise ValueError(
+                f"Malformed Common.cfg: expected 12 fields, got {len(setup)}. "
+                "Required format: NumberOfPreferredNeighbors <n> UnchokingInterval <t> "
+                "OptimisticUnchokingInterval <t> FileName <name> FileSize <size> PieceSize <size>"
+            )
 
         # Number of peers to send data to and unchoking details
         self.neighbor_count = int(setup[1])
         self.unchoking_interval = float(setup[3])
         self.optimistic_unchoking_interval = float(setup[5])
 
+        # Validate intervals are positive (prevent division by zero)
+        if self.unchoking_interval <= 0:
+            raise ValueError(f"UnchokingInterval must be positive, got {self.unchoking_interval}")
+        if self.optimistic_unchoking_interval <= 0:
+            raise ValueError(f"OptimisticUnchokingInterval must be positive, got {self.optimistic_unchoking_interval}")
+
         # Attributes of file being transferred
         self.file_name = setup[7]
         self.file_size = int(setup[9])
         self.piece_size = int(setup[11])
 
+        # Parse PeerInfo.cfg with validation
+        with open('PeerInfo.cfg') as config:
+            setup = config.read().splitlines()
 
-        # Sets up identifying information for the peer
-        config = open('PeerInfo.cfg')
-        setup = config.read().splitlines()
-        selected_line = ''
+        selected_line = None
         for line in setup:
             info = line.split()
+            if len(info) < 4:
+                continue  # Skip malformed lines
             if int(info[0]) == self.id:
-                selected_line = line.split()
-        config.close()
+                selected_line = info
+                break
+
+        if selected_line is None:
+            raise ValueError(f"Peer {self.id} not found in PeerInfo.cfg")
+
+        if len(selected_line) < 4:
+            raise ValueError(
+                f"Malformed PeerInfo.cfg entry for peer {self.id}: "
+                f"expected 4 fields (id hostname port has_file), got {len(selected_line)}"
+            )
 
         self.host_name = selected_line[1]
         self.port = int(selected_line[2])
@@ -276,6 +301,11 @@ class Peer:
 
         except Exception as e:
             print(f"[Peer {self.id}] Failed to connect to Peer {peer_id}: {e}")
+            # Close socket on connection failure to prevent resource leak
+            try:
+                peer_socket.close()
+            except:
+                pass
 
     def _handle_peer_connection(self, peer_socket, peer_id):
         """Handle communication with a connected peer (runs in thread)"""
@@ -504,10 +534,12 @@ class Peer:
         """Download the received piece and update"""
         piece_index = struct.unpack(">I", payload[:4])[0]
         data = payload[4:]
-        self.write_file(piece_index, data)
 
+        # Validate BEFORE writing to prevent data corruption
         if piece_index >= self.num_of_pieces:
             raise ValueError(f"Peer {peer_id} sent invalid piece index {piece_index}")
+
+        self.write_file(piece_index, data)
 
         # Update attributes after obtaining new piece
         with self.data_lock:
@@ -632,9 +664,8 @@ class Peer:
         preferred_neigh_str = preferred_neigh_str[:-2]
 
         # Neighbor order shouldn't matter if its still the same ones
-        sorted(self.preferred_neighbors)
-        sorted(old_neighbors)
-        self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
+        if sorted(old_neighbors) != sorted(self.preferred_neighbors):
+            self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
 
         # Unchokes new neighbors
         with self.connection_lock:
@@ -707,6 +738,10 @@ class Peer:
                             count += 1
                             if random.randrange(count) == 0:
                                 new_piece = piece_index
+
+                # Check if we found any piece to request
+                if new_piece is None:
+                    break  # No pieces available to request
 
                 if peer_id in self.connections:
                     try:

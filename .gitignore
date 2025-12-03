@@ -1,2 +1,8 @@
 # Peer folders produced by processes
 peer_*/
+
+# Virtual environment
+venv/
+
+# Tests
+tests/
