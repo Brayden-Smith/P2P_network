@@ -489,6 +489,7 @@ class Peer:
         if peer_id != self.optimistic_neighbor and peer_id not in self.interested_neighbors:
             return
 
+        self._log_event(f"Peer {self.id} received the 'request' message from {peer_id}.")
         if len(payload) != 4:
             raise ValueError("Invalid 'request' payload length")
 
@@ -534,6 +535,7 @@ class Peer:
         with self.connection_lock:
             for peer, psocket in list(self.connections.items()):
                 try:
+                    self._log_event(f"Peer {peer} is sending 'have' message for piece {piece_index} to all.")
                     psocket.sendall(Message.create_message("have", struct.pack(">I", piece_index)))
                 except:
                     pass
@@ -632,8 +634,7 @@ class Peer:
         # Neighbor order shouldn't matter if its still the same ones
         sorted(self.preferred_neighbors)
         sorted(old_neighbors)
-        if old_neighbors != self.preferred_neighbors:
-            self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
+        self._log_event(f"Peer {self.id} has the preferred neighbors {preferred_neigh_str}")
 
         # Unchokes new neighbors
         with self.connection_lock:
