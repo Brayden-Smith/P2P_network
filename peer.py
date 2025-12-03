@@ -111,6 +111,7 @@ class Peer:
         self.choke_status = {}
         # List of pieces that are currently being retrieved, stops redundancy
         self.pieces_requested = []
+        self.failed_connections = set()
         # Total number of pieces that make up the target file
         self.num_of_pieces = math.ceil(self.file_size / self.piece_size)
         # bitfield is stored as bytearray - each bit represents a piece
@@ -301,6 +302,7 @@ class Peer:
 
         except Exception as e:
             print(f"[Peer {self.id}] Failed to connect to Peer {peer_id}: {e}")
+            self.failed_connections.add(peer_id)
             # Close socket on connection failure to prevent resource leak
             try:
                 peer_socket.close()
@@ -625,6 +627,25 @@ class Peer:
                 return False
 
         return True
+
+    def retry_missing_connections(self):
+        """Retry connecting to peers we don't have bitfields from"""
+        for peer_info in self.all_peers:
+            peer_id = peer_info['id']
+            if peer_id == self.id:
+                continue
+
+            if peer_info['has_file']:
+                continue
+
+            if peer_id not in self.peer_bitfields:
+                with self.connection_lock:
+                    already_connected = peer_id in self.connections
+
+                if not already_connected:
+                    print(f"[Peer {self.id}] Retrying connection to Peer {peer_id}")
+                    self.failed_connections.discard(peer_id)
+                    self._connect_to_peer(peer_info)
 
     def calculate_download(self):
         """Calculate the download speed of every peer that has sent data in this interval """

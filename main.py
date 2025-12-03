@@ -41,6 +41,7 @@ if __name__ == '__main__':
 
     last_unchoke_time = time.time()
     last_optimistic_time = time.time()
+    last_retry_time = time.time()
     unchoke = False
     unchoke_optimistically = False
 
@@ -71,6 +72,10 @@ if __name__ == '__main__':
 
             connected = peer.get_connected_peers()
             print(f"[Peer {peer.id}] Active connections: {connected}, Pieces: {peer.piece_count}/{peer.num_of_pieces}")
+
+            if peer.file_complete and current_time - last_retry_time >= 10:
+                last_retry_time = current_time
+                peer.retry_missing_connections()
 
             # Check termination condition: all peers have complete file
             if peer.all_peers_complete():
