@@ -33,3 +33,16 @@ made the video and made fixes to make sure program ran on different machines
 
 ### Cesar
 
+worked on the handshake protocol for peer communication
+
+built the bitfield exchange and handling between peers
+
+added the interest logic for determining which pieces to request
+
+added thread safety with data locks for shared state access
+
+fixed threading and path handling bugs in file transfer
+
+fixed bugs including piece index validation, socket resource leak, and config file validation
+
+fixed termination bug when peers start out of order by adding connection retry logic
