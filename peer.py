@@ -379,6 +379,7 @@ class Peer:
         remote_bitfield = bytearray(payload)
         self.peer_bitfields[peer_id] = remote_bitfield
         self._evaluate_interest(peer_id, peer_socket)
+        self._log_event(f"Peer {peer_id} received bitfield: {remote_bitfield}")
 
     def _should_send_interested(self, remote_bitfield, peer_id):
         """Determine if the remote peer has pieces we need"""
