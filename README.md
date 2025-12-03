@@ -31,7 +31,7 @@ made the video and made fixes to make sure program ran on different machines
 
 
 
-### Cesar
+### Cesar (XxMasterepicxX)
 
 worked on the handshake protocol for peer communication
 
